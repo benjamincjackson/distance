@@ -18,4 +18,7 @@ fn main() {
     println!("{} {}", w, n);
 
    let ba = populate_array(&args.input);
+
+    // let consensus = fasta_consensus(&args.input).unwrap();
+    // println!("{}", consensus.chars().count());
 }
