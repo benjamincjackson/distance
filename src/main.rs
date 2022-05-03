@@ -34,4 +34,5 @@ fn main() {
             println!("{}\t{}\t{}", &efra[i].id, &efra[j].id, d)
        }
    }
+
 }
