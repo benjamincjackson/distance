@@ -14,6 +14,37 @@ pub struct FastaRecord {
     pub seq: String,
 }
 
+#[derive(Clone)]
+pub struct EncodedFastaRecord {
+    pub id: String,
+    pub description: String,
+    pub seq: Vec<u8>,
+    pub count_A: usize,
+    pub count_T: usize,
+    pub count_G: usize,
+    pub count_C: usize,
+}
+
+impl EncodedFastaRecord {
+    fn new() -> EncodedFastaRecord {
+        EncodedFastaRecord{id: String::new(), description: String::new(), seq: vec![0;0], count_A: 0, count_T: 0, count_C: 0, count_G: 0}
+    }
+    fn newknownwidth(w: usize) -> EncodedFastaRecord {
+        EncodedFastaRecord{id: String::new(), description: String::new(), seq: vec![0;w], count_A: 0, count_T: 0, count_C: 0, count_G: 0}
+    }
+    fn count_bases(&mut self) {
+        for i in 0..self.seq.len() {
+            match self.seq[i] {
+                136 => self.count_A += 1,
+                24 => self.count_T += 1,
+                72 => self.count_G += 1,
+                40 => self.count_C += 1,
+                _ => continue,
+            }
+        }
+    }
+}
+
 pub fn read_fasta(filename: &String) -> io::Result<()> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
@@ -94,7 +125,7 @@ pub fn populate_array(filename: &String) -> io::Result<(Vec<Vec<u8>>, Vec<String
     let mut byte_array: Vec<Vec<u8>> = vec![vec![0; w]; n];
     let mut fasta_ids: Vec<String> = vec!["".to_string(); n];
 
-    let mut n:usize = 0;
+    let mut ncounter = 0;
     let mut counter:usize = 0;
     let mut l = String::new();
     let mut id = String::with_capacity(80);
@@ -110,25 +141,70 @@ pub fn populate_array(filename: &String) -> io::Result<(Vec<Vec<u8>>, Vec<String
         if first {
             description = l.strip_prefix(">").unwrap().to_string();
             id = description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
-            fasta_ids[n as usize] = id;
+            fasta_ids[ncounter as usize] = id;
             first = false;
             continue
         } else if l.chars().nth(0).unwrap() == '>' {
-            n += 1;
+            ncounter += 1;
             counter = 0;
             description = l.strip_prefix(">").unwrap().to_string();
             id = description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
-            fasta_ids[n] = id;
+            fasta_ids[ncounter] = id;
             continue
 		}
         for nuc in l.bytes() {
-            byte_array[n][counter] = a[nuc as usize];
+            byte_array[ncounter][counter] = a[nuc as usize];
             counter += 1;
         }
     }
 
    Ok((byte_array, fasta_ids))
 }
+
+pub fn populate_struct_array(filename: &String) -> io::Result<Vec<EncodedFastaRecord>> {
+    
+    let v = encoding_array();
+
+    let (w, n) = align_dims(filename).unwrap();
+
+    let mut structs: Vec<EncodedFastaRecord> = vec![EncodedFastaRecord::newknownwidth(w);n];
+
+    let mut ncounter = 0;
+    let mut nuccounter:usize = 0;
+    let mut l = String::new();
+    let mut first = true;
+
+    let f = File::open(filename)?;
+    let reader = BufReader::new(f);
+
+    for line in reader.lines() {
+        l = line.unwrap();
+
+        if first {
+            structs[ncounter].description = l.strip_prefix(">").unwrap().to_string();
+            structs[ncounter].id = structs[ncounter].description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
+            first = false;
+            continue
+        } else if l.chars().nth(0).unwrap() == '>' {
+            ncounter += 1;
+            nuccounter = 0;
+            structs[ncounter].description = l.strip_prefix(">").unwrap().to_string();
+            structs[ncounter].id = structs[ncounter].description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
+            continue
+		}
+        for nuc in l.bytes() {
+            structs[ncounter].seq[nuccounter] = v[nuc as usize];
+            nuccounter += 1;
+        }
+    }
+
+    for i in 0..structs.len() {
+        structs[i].count_bases();
+    }
+
+   Ok(structs)
+}
+
 
 pub fn fasta_consensus(filename: &String) -> io::Result<String> {
 
