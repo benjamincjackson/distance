@@ -1,6 +1,11 @@
+use std::io;
+use std::io::Write;
+use std::io::BufWriter;
+use std::fs::File;
+use clap::Parser;
+
 mod fastaio;
 use crate::fastaio::*;
-use clap::Parser;
 
 mod distance;
 use crate::distance::tn93;
@@ -11,9 +16,11 @@ struct Args {
 	// input alignment
 	#[clap(short, long)]
 	input: String,
+	#[clap(short, long)]
+    output: String,
 }
 
-fn main() {
+fn main() -> io::Result<()> {
 	let args = Args::parse();
 
 //	 let (w, n) = align_dims(&args.input).unwrap();
@@ -22,17 +29,22 @@ fn main() {
 
 //	let ba = populate_array(&args.input);
 
-   let efra = populate_struct_array(&args.input).unwrap();
+   let efra = populate_struct_array(&args.input)?;
 
    let mut d: f64 = 0.0;
 
-   println!("sequence1\tsequence2\tdistance");
+   let f = File::create(&args.output)?;
+   let mut buf = BufWriter::new(f);
+   writeln!(buf, "{}", "sequence1,sequence2,distance")?;
 
    for i in 0..efra.len()-1 {
 	   for j in i+1..efra.len() {
-			d = tn93(&efra[i], &efra[j]);
-			println!("{}\t{}\t{}", &efra[i].id, &efra[j].id, d)
+            d = tn93(&efra[i], &efra[j]);
+            writeln!(buf, "{}\t{}\t{}", &efra[i].id, &efra[j].id, d)?;
 	   }
    }
 
+   buf.flush()?;
+
+   Ok(())
 }
