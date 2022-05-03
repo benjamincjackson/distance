@@ -35,7 +35,7 @@ fn main() -> io::Result<()> {
 
    let f = File::create(&args.output)?;
    let mut buf = BufWriter::new(f);
-   writeln!(buf, "{}", "sequence1,sequence2,distance")?;
+   writeln!(buf, "sequence1,sequence2,distance")?;
 
    for i in 0..efra.len()-1 {
 	   for j in i+1..efra.len() {

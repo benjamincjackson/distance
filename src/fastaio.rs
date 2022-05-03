@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::BufRead;
 use std::io::{Error, ErrorKind};
-use std::iter::Enumerate;
+
 
 #[path = "encoding.rs"]
 mod encoding;
@@ -61,8 +61,8 @@ pub fn read_fasta(filename: &String) -> io::Result<()> {
 	for line in reader.lines() {
 		l = line.unwrap();
 		if first {
-			if l.starts_with(">") {
-				description = l.strip_prefix(">").unwrap().to_string();
+			if l.starts_with('>') {
+				description = l.strip_prefix('>').unwrap().to_string();
 				id = description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
 				first = false
 			} else {
@@ -70,14 +70,14 @@ pub fn read_fasta(filename: &String) -> io::Result<()> {
 			}
 			continue
 		}
-		if l.starts_with(">") {
+		if l.starts_with('>') {
 			let FR: FastaRecord = FastaRecord { id: id.clone(), description: description.clone(), seq: seq.clone() };
 			// counter+=1;
 			// println!("{}", counter);
 			println!(">{}", FR.id);
 			// println!("{}", FR.description);
 			println!("{}", FR.seq);
-			description = l.strip_prefix(">").unwrap().to_string();
+			description = l.strip_prefix('>').unwrap().to_string();
 			id = description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
 			seq = "".to_string()
 		} else {
@@ -85,7 +85,7 @@ pub fn read_fasta(filename: &String) -> io::Result<()> {
 		}
 	}
 
-	let FR: FastaRecord = FastaRecord { id: id.clone(), description: description.clone(), seq: seq.clone() };
+	let FR: FastaRecord = FastaRecord { id, description, seq: seq.clone() };
 	// println!("{}", counter);
 	println!(">{}", FR.id);
 	// println!("{}", FR.description);
@@ -105,11 +105,11 @@ pub fn align_dims(filename: &String) -> io::Result<(usize, usize)> {
 	for line in reader.lines() {
 		l = line.unwrap();
 		
-		if l.chars().nth(0).unwrap() == '>' {
+		if l.starts_with('>') {
 			n += 1;
 		}
 
-		if n == 1 && l.chars().nth(0).unwrap() != '>' {
+		if n == 1 && !l.starts_with('>') {
 			w += l.chars().count();
 		}
 	}
@@ -128,7 +128,7 @@ pub fn align_width(filename: &String) -> io::Result<usize> {
 	for line in reader.lines() {
 		l = line.unwrap();
 		
-		if l.chars().nth(0).unwrap() == '>' {
+		if l.starts_with('>') {
 			n += 1;
 		}
 
@@ -136,7 +136,7 @@ pub fn align_width(filename: &String) -> io::Result<usize> {
 			break;
 		}
 
-		if n == 1 && l.chars().nth(0).unwrap() != '>' {
+		if n == 1 && !l.starts_with('>') {
 			w += l.chars().count();
 		}
 
@@ -168,15 +168,15 @@ pub fn populate_array(filename: &String) -> io::Result<(Vec<Vec<u8>>, Vec<String
 		l = line.unwrap();
 
 		if first {
-			description = l.strip_prefix(">").unwrap().to_string();
+			description = l.strip_prefix('>').unwrap().to_string();
 			id = description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
 			fasta_ids[ncounter as usize] = id;
 			first = false;
 			continue
-		} else if l.chars().nth(0).unwrap() == '>' {
+		} else if l.starts_with('>') {
 			ncounter += 1;
 			counter = 0;
-			description = l.strip_prefix(">").unwrap().to_string();
+			description = l.strip_prefix('>').unwrap().to_string();
 			id = description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
 			fasta_ids[ncounter] = id;
 			continue
@@ -210,14 +210,14 @@ pub fn populate_struct_array(filename: &String) -> io::Result<Vec<EncodedFastaRe
 		l = line.unwrap();
 
 		if first {
-			structs[ncounter].description = l.strip_prefix(">").unwrap().to_string();
+			structs[ncounter].description = l.strip_prefix('>').unwrap().to_string();
 			structs[ncounter].id = structs[ncounter].description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
 			first = false;
 			continue
-		} else if l.chars().nth(0).unwrap() == '>' {
+		} else if l.starts_with('>') {
 			ncounter += 1;
 			nuccounter = 0;
-			structs[ncounter].description = l.strip_prefix(">").unwrap().to_string();
+			structs[ncounter].description = l.strip_prefix('>').unwrap().to_string();
 			structs[ncounter].id = structs[ncounter].description.split_whitespace().collect::<Vec<&str>>()[0].to_string();
 			continue
 		}
@@ -285,13 +285,13 @@ pub fn fasta_consensus(filename: &String) -> io::Result<String> {
 		l = line.unwrap();
 
 		if firstline {
-			if l.starts_with(">") {
+			if l.starts_with('>') {
 				firstline = false
 			} else {
 				return Err(Error::new(ErrorKind::Other, "badly formatted fasta file"));
 			}
 			continue
-		} else if l.chars().nth(0).unwrap() == '>' {
+		} else if l.starts_with('>') {
 			if nuccounter != w {
 				return Err(Error::new(ErrorKind::Other, "different length sequences, is this an alignment?"));
 			}

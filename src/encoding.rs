@@ -35,5 +35,5 @@ pub fn encoding_array() -> [u8; 256] {
 	a['-' as usize] = 244; // -
 	a['?' as usize] = 242; // ?
 
-	return a;
+	a
 }
