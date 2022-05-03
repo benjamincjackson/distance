@@ -1,6 +1,6 @@
 // to do - just make the (immutable) table straight away
 pub fn encoding_array() -> [u8; 256] {
-    let mut a:[u8;256] = [0;256];
+	let mut a:[u8;256] = [0;256];
 
 	a['A' as usize] = 136; // A
 	a['a' as usize] = 136; // a
@@ -35,5 +35,5 @@ pub fn encoding_array() -> [u8; 256] {
 	a['-' as usize] = 244; // -
 	a['?' as usize] = 242; // ?
 
-    return a;
+	return a;
 }
