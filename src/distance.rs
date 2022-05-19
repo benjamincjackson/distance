@@ -26,7 +26,9 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> f64 {
 	let mut count_L: usize = 0; // total length of resolved comparison
 
 	for i in 0..target.seq.len() {
-		if (query.seq[i]&target.seq[i]) < 16 && query.seq[i]&8 == 8 && target.seq[i]&8 == 8 { // are the bases different (and known for sure)
+		if query.seq[i]&8 == 8 && query.seq[i] == target.seq[i] { // at the bases certainly the same
+			count_L += 1;
+		} else if (query.seq[i]&target.seq[i]) < 16 && query.seq[i]&8 == 8 && target.seq[i]&8 == 8 { // are the bases different (and known for sure)
 			count_d += 1;
 			count_L += 1;
 			if (query.seq[i] | target.seq[i]) == 200 { // 1 if one of the bases is adenine and the other one is guanine, 0 otherwise
@@ -34,9 +36,7 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> f64 {
 			} else if (query.seq[i] |  target.seq[i]) == 56 { // 1 if one of the bases is cytosine and the other one is thymine, 0 otherwise
 				count_P2 += 1;
 			}
-		} else if query.seq[i]&8 == 8 && query.seq[i] == target.seq[i] { // at the bases certainly the same
-			count_L += 1;
-		}
+		} 
 	}
 
 	// estimated rates from this pairwise comparison
