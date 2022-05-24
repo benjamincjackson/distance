@@ -1,6 +1,12 @@
 use crate::fastaio::EncodedFastaRecord;
 
-pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> f64 {
+#[derive(Clone)]
+pub enum FloatInt {
+    Float(f64),
+    Int(i64),
+}
+
+pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
 	
 	// Total ATGC length of the two sequences
 	let L: usize = query.count_A + query.count_T + query.count_G + query.count_C + target.count_A + target.count_T + target.count_G + target.count_C;
@@ -26,7 +32,7 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> f64 {
 	let mut count_L: usize = 0; // total length of resolved comparison
 
 	for i in 0..target.seq.len() {
-		if query.seq[i]&8 == 8 && query.seq[i] == target.seq[i] { // at the bases certainly the same
+		if query.seq[i]&8 == 8 && query.seq[i] == target.seq[i] { // are the bases certainly the same
 			count_L += 1;
 		} else if (query.seq[i]&target.seq[i]) < 16 && query.seq[i]&8 == 8 && target.seq[i]&8 == 8 { // are the bases different (and known for sure)
 			count_d += 1;
@@ -49,5 +55,47 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> f64 {
 	let w2:f64 = 1.0 - P2/k2 - Q/(2.0*g_Y);
 	let w3:f64 = 1.0 - Q/(2.0*g_R*g_Y);
 
-	-k1 * w1.ln() - k2 * w2.ln() - k3 * w3.ln() // d!
+	FloatInt::Float(-k1 * w1.ln() - k2 * w2.ln() - k3 * w3.ln()) // d!
+}
+
+pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+	let mut d: i64 = 0;
+	for i in 0..target.seq.len() {
+		if query.seq[i]&target.seq[i] < 16 {
+			d += 1;
+		}
+	}
+	FloatInt::Int(d)
+}
+
+pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+	let mut d = 0.0;
+	let mut n = 0.0;
+	for i in 0..target.seq.len() {
+		if query.seq[i]&8 == 8 && query.seq[i] == target.seq[i] {
+			d += 1.0;
+		} else if query.seq[i]&target.seq[i] < 16 {
+			d += 1.0;
+			n += 1.0;
+		}
+	}
+	
+	FloatInt::Float(n / d)
+}
+
+pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+	let mut d = 0.0;
+	let mut n = 0.0;
+	for i in 0..target.seq.len() {
+		if query.seq[i]&8 == 8 && query.seq[i] == target.seq[i] {
+			d += 1.0;
+		} else if query.seq[i]&target.seq[i] < 16 {
+			d += 1.0;
+			n += 1.0;
+		}
+	}
+	
+	let p = n / d;
+
+	FloatInt::Float(-0.75*(1.0-(4 as f64/3 as f64)*p).ln())
 }
