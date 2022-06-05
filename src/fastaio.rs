@@ -61,7 +61,7 @@ impl EncodedFastaRecord {
     }
 }
 
-pub fn align_dims(filename: &String) -> io::Result<(usize, usize)> {
+pub fn align_dims(filename: &str) -> io::Result<(usize, usize)> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
 
@@ -84,7 +84,7 @@ pub fn align_dims(filename: &String) -> io::Result<(usize, usize)> {
     Ok((w, n))
 }
 
-pub fn align_width(filename: &String) -> io::Result<usize> {
+pub fn align_width(filename: &str) -> io::Result<usize> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
 
@@ -111,7 +111,7 @@ pub fn align_width(filename: &String) -> io::Result<usize> {
     Ok(w)
 }
 
-pub fn populate_array(filename: &String) -> io::Result<(Vec<Vec<u8>>, Vec<String>)> {
+pub fn populate_array(filename: &str) -> io::Result<(Vec<Vec<u8>>, Vec<String>)> {
     let a = encoding_array();
 
     let (w, n) = align_dims(filename).unwrap();
@@ -155,7 +155,7 @@ pub fn populate_array(filename: &String) -> io::Result<(Vec<Vec<u8>>, Vec<String
     Ok((byte_array, fasta_ids))
 }
 
-pub fn populate_struct_array(filename: &String) -> io::Result<Vec<EncodedFastaRecord>> {
+pub fn populate_struct_array(filename: &str) -> io::Result<Vec<EncodedFastaRecord>> {
     let v = encoding_array();
 
     let (w, n) = align_dims(filename).unwrap();

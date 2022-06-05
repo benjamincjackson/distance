@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Command, Arg};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use std::collections::HashMap;
@@ -13,24 +13,6 @@ use crate::fastaio::*;
 mod distance;
 use crate::distance::*;
 
-#[derive(Parser, Debug, Clone)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    #[clap(short, long, default_value = "raw", possible_values = ["raw", "n", "jc69", "tn93"], help = "which distance measure to use")]
-    measure: String,
-    #[clap(
-        short,
-        long,
-        help = "how many threads to spin up for pairwise comparisons"
-    )]
-    threads: usize,
-    // input alignment
-    #[clap(short, long, help = "input alignment in fasta format")]
-    input: String,
-    #[clap(short, long, help = "output file in tab-separated-value format")]
-    output: String,
-}
-
 #[derive(Clone)]
 struct Pair {
     seq1: EncodedFastaRecord,
@@ -38,8 +20,8 @@ struct Pair {
     idx: usize,
 }
 impl Pair {
-    fn distance(&self, measure: &String) -> FloatInt {
-        match measure.as_str() {
+    fn distance(&self, measure: &str) -> FloatInt {
+        match measure {
             "n" => snp(&self.seq1, &self.seq2),
             "raw" => raw(&self.seq1, &self.seq2),
             "jc69" => jc69(&self.seq1, &self.seq2),
@@ -59,35 +41,84 @@ struct Distance {
 }
 
 fn main() -> io::Result<()> {
-    let args = Args::parse();
 
-    let efra = populate_struct_array(&args.input)?;
+    let m = Command::new("distance")
+        .arg(Arg::new("threads")
+            .short('t')
+            .long("threads")
+            .takes_value(true)
+            .help("how many threads to spin up for pairwise comparisons"))
+        .arg(Arg::new("input")
+            .short('i')
+            .long("input")
+            .help("input alignment(s) in fasta format")
+            .takes_value(true)
+            .multiple_values(true)
+            .max_values(2)
+            .required(true))
+        .arg(Arg::new("measure")
+            .short('m')
+            .long("measure")
+            .takes_value(true)
+            .default_value("raw")
+            .possible_values(["raw", "n", "jc69", "tn93"])
+            .help("which distance measure to use"))
+        .arg(Arg::new("output")
+            .short('o')
+            .long("output")
+            .takes_value(true)
+            .help("output file in tab-separated-value format")
+            .required(true))
+        .get_matches();
+
+    let inputs: Vec<&str> = m.values_of("input").unwrap().collect();
 
     let (pair_sender, pair_receiver) = bounded(50);
     let (distance_sender, distance_receiver) = bounded(50);
 
     let wg_dist = WaitGroup::new();
 
-    thread::spawn({
-        move || {
-            generate_pairs(efra, pair_sender);
-        }
-    });
+    if inputs.len() == 1 {
+        let efra = populate_struct_array(inputs[0])?;
+        thread::spawn({
+            move || {
+                generate_pairs_square(efra, pair_sender);
+            }
+        });
+    } else {
+        let efra1 = populate_struct_array(inputs[0])?;
+        let efra2 = populate_struct_array(inputs[1])?;
+        thread::spawn({
+            move || {
+                generate_pairs_rect(efra1, efra2, pair_sender);
+            }
+        });
+    }
+
+    let output = m
+        .value_of("output").unwrap().to_owned();
 
     let write = thread::spawn({
         move || {
-            gather_write(&args.output, distance_receiver);
+            gather_write(&output, distance_receiver);
         }
     });
 
+    let threads = m
+        .value_of("threads").unwrap()
+        .parse::<usize>().unwrap();
+
     let mut workers = Vec::new();
-    for _i in 0..args.threads {
+    for _i in 0..threads {
         workers.push((pair_receiver.clone(), distance_sender.clone()))
     }
 
+    let measure = m
+        .value_of("measure").unwrap().to_owned();
+
     for worker in workers {
         let wg_dist = wg_dist.clone();
-        let measure = args.measure.clone();
+        let measure = measure.clone();
         thread::spawn(move || {
             for message in worker.0.iter() {
                 let d = message.distance(&measure);
@@ -110,7 +141,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn generate_pairs(sequences: Vec<EncodedFastaRecord>, sender: Sender<Pair>) {
+fn generate_pairs_square(sequences: Vec<EncodedFastaRecord>, sender: Sender<Pair>) {
     let mut counter: usize = 0;
     for i in 0..sequences.len() - 1 {
         for j in i + 1..sequences.len() {
@@ -118,6 +149,23 @@ fn generate_pairs(sequences: Vec<EncodedFastaRecord>, sender: Sender<Pair>) {
                 .send(Pair {
                     seq1: sequences[i].clone(),
                     seq2: sequences[j].clone(),
+                    idx: counter,
+                })
+                .unwrap();
+            counter += 1;
+        }
+    }
+    drop(sender);
+}
+
+fn generate_pairs_rect(sequences1: Vec<EncodedFastaRecord>, sequences2: Vec<EncodedFastaRecord>, sender: Sender<Pair>) {
+    let mut counter: usize = 0;
+    for i in 0..sequences1.len() {
+        for j in 0..sequences2.len() {
+            sender
+                .send(Pair {
+                    seq1: sequences1[i].clone(),
+                    seq2: sequences2[j].clone(),
                     idx: counter,
                 })
                 .unwrap();
