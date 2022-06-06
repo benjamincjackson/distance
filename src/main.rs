@@ -22,11 +22,12 @@ struct Pair {
 impl Pair {
     fn distance(&self, measure: &str) -> FloatInt {
         match measure {
-            "n" => snp(&self.seq1, &self.seq2),
             "raw" => raw(&self.seq1, &self.seq2),
+            "n" => snp(&self.seq1, &self.seq2),
             "jc69" => jc69(&self.seq1, &self.seq2),
+            "k80" => k80(&self.seq1, &self.seq2),
             "tn93" => tn93(&self.seq1, &self.seq2),
-            // TO DO - learn Rust's error handling properly and apply it here
+            // should never get this far because the options are defined in the clap cli:
             _ => panic!("unknown distance measure"),
         }
     }
@@ -61,7 +62,7 @@ fn main() -> io::Result<()> {
             .long("measure")
             .takes_value(true)
             .default_value("raw")
-            .possible_values(["raw", "n", "jc69", "tn93"])
+            .possible_values(["n", "raw", "jc69", "k80", "tn93"])
             .help("which distance measure to use"))
         .arg(Arg::new("output")
             .short('o')
@@ -78,16 +79,21 @@ fn main() -> io::Result<()> {
 
     let wg_dist = WaitGroup::new();
 
+    let measure = m
+        .value_of("measure")
+        .unwrap()
+        .to_owned();
+
     if inputs.len() == 1 {
-        let efra = populate_struct_array(inputs[0])?;
+        let mut efra = populate_struct_array(inputs[0])?;
         thread::spawn({
             move || {
                 generate_pairs_square(efra, pair_sender);
             }
         });
     } else {
-        let efra1 = populate_struct_array(inputs[0])?;
-        let efra2 = populate_struct_array(inputs[1])?;
+        let mut efra1 = populate_struct_array(inputs[0])?;
+        let mut efra2 = populate_struct_array(inputs[1])?;
         thread::spawn({
             move || {
                 generate_pairs_rect(efra1, efra2, pair_sender);
@@ -96,7 +102,9 @@ fn main() -> io::Result<()> {
     }
 
     let output = m
-        .value_of("output").unwrap().to_owned();
+        .value_of("output")
+        .unwrap()
+        .to_owned();
 
     let write = thread::spawn({
         move || {
@@ -105,16 +113,15 @@ fn main() -> io::Result<()> {
     });
 
     let threads = m
-        .value_of("threads").unwrap()
-        .parse::<usize>().unwrap();
+        .value_of("threads")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
 
     let mut workers = Vec::new();
     for _i in 0..threads {
         workers.push((pair_receiver.clone(), distance_sender.clone()))
-    }
-
-    let measure = m
-        .value_of("measure").unwrap().to_owned();
+    }    
 
     for worker in workers {
         let wg_dist = wg_dist.clone();

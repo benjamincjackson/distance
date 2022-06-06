@@ -13,6 +13,20 @@ pub struct FastaRecord {
     pub description: String,
     pub seq: String,
 }
+impl FastaRecord {
+    pub fn encode(&self) -> EncodedFastaRecord {
+        let mut EFR = EncodedFastaRecord::newknownwidth(self.seq.len());
+        EFR.id = self.id.clone();
+        EFR.description = self.description.clone();
+
+        let a = encoding_array();
+        for i in 0..self.seq.len() {
+            EFR.seq[i] = a[self.seq.as_bytes()[i] as usize];
+        }
+
+        EFR
+    }
+}
 
 #[derive(Clone)]
 pub struct EncodedFastaRecord {
@@ -23,6 +37,7 @@ pub struct EncodedFastaRecord {
     pub count_T: usize,
     pub count_G: usize,
     pub count_C: usize,
+    pub differences: Vec<usize>,
 }
 
 impl EncodedFastaRecord {
@@ -35,6 +50,7 @@ impl EncodedFastaRecord {
             count_T: 0,
             count_C: 0,
             count_G: 0,
+            differences: Vec::new(),
         }
     }
     fn newknownwidth(w: usize) -> EncodedFastaRecord {
@@ -46,6 +62,7 @@ impl EncodedFastaRecord {
             count_T: 0,
             count_C: 0,
             count_G: 0,
+            differences: Vec::new(),
         }
     }
     fn count_bases(&mut self) {
@@ -206,8 +223,18 @@ pub fn populate_struct_array(filename: &str) -> io::Result<Vec<EncodedFastaRecor
     Ok(structs)
 }
 
-pub fn fasta_consensus(filename: &String) -> io::Result<String> {
-    let w = align_width(filename)?;
+pub fn fasta_consensus(files: Vec<&str>) -> io::Result<FastaRecord> {
+    let mut widths: Vec<usize> = vec![0; files.len()];
+    for i in 0..files.len() {
+        widths[i] = align_width(files[i]).unwrap();
+        if i > 0 {
+            if widths[i] != widths[i-1] {
+                panic!("Files do not have the same width");
+            }
+        }
+    }
+
+    let w = widths[0];
     let mut counts: Vec<Vec<usize>> = vec![vec![0; 17]; w];
 
     let mut lookup: [usize; 256] = [17; 256];
@@ -244,41 +271,44 @@ pub fn fasta_consensus(filename: &String) -> io::Result<String> {
     lookup['-' as usize] = 15;
     lookup['?' as usize] = 16;
 
-    let f = File::open(filename)?;
-    let reader = BufReader::new(f);
+    for file in files {
+    
+        let f = File::open(file)?;
+        let reader = BufReader::new(f);
 
-    let mut firstline = true;
-    let mut l = String::new();
-    let mut nuccounter = 0;
+        let mut firstline = true;
+        let mut l = String::new();
+        let mut nuccounter = 0;
 
-    for line in reader.lines() {
-        l = line.unwrap();
+        for line in reader.lines() {
+            l = line.unwrap();
 
-        if firstline {
-            if l.starts_with('>') {
-                firstline = false
-            } else {
-                return Err(Error::new(ErrorKind::Other, "badly formatted fasta file"));
+            if firstline {
+                if l.starts_with('>') {
+                    firstline = false
+                } else {
+                    return Err(Error::new(ErrorKind::Other, "badly formatted fasta file"));
+                }
+                continue;
+            } else if l.starts_with('>') {
+                if nuccounter != w {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "different length sequences, is this an alignment?",
+                    ));
+                }
+                nuccounter = 0;
+                continue;
             }
-            continue;
-        } else if l.starts_with('>') {
-            if nuccounter != w {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "different length sequences, is this an alignment?",
-                ));
-            }
-            nuccounter = 0;
-            continue;
-        }
-        for nuc in l.bytes() {
-            counts[nuccounter][lookup[nuc as usize]] += 1;
-            nuccounter += 1;
-            if nuccounter > w {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "different length sequences, is this an alignment?",
-                ));
+            for nuc in l.bytes() {
+                counts[nuccounter][lookup[nuc as usize]] += 1;
+                nuccounter += 1;
+                if nuccounter > w {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "different length sequences, is this an alignment?",
+                    ));
+                }
             }
         }
     }
@@ -304,5 +334,7 @@ pub fn fasta_consensus(filename: &String) -> io::Result<String> {
         consensus.push(back_translate[maxidx])
     }
 
-    Ok(consensus)
+    let FR = FastaRecord{id: "consensus".to_string(), description: "consensus".to_string(), seq: consensus};
+
+    Ok(FR)
 }

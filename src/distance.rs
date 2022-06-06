@@ -1,9 +1,81 @@
+use std::collections::HashSet;
 use crate::fastaio::EncodedFastaRecord;
 
 #[derive(Clone)]
 pub enum FloatInt {
     Float(f64),
     Int(i64),
+}
+
+pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+    let mut d: i64 = 0;
+    for i in 0..target.seq.len() {
+        if query.seq[i] & target.seq[i] < 16 {
+            d += 1;
+        }
+    }
+    FloatInt::Int(d)
+}
+
+pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+    let mut d = 0.0;
+    let mut n = 0.0;
+    for i in 0..target.seq.len() {
+        if query.seq[i] & 8 == 8 && query.seq[i] == target.seq[i] {
+            d += 1.0;
+        } else if query.seq[i] & target.seq[i] < 16 {
+            d += 1.0;
+            n += 1.0;
+        }
+    }
+
+    FloatInt::Float(n / d)
+}
+
+pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+    let mut d = 0.0;
+    let mut n = 0.0;
+    for i in 0..target.seq.len() {
+        if query.seq[i] & 8 == 8 && query.seq[i] == target.seq[i] {
+            d += 1.0;
+        } else if query.seq[i] & target.seq[i] < 16 {
+            d += 1.0;
+            n += 1.0;
+        }
+    }
+
+    let p = n / d;
+
+    FloatInt::Float(-0.75 * (1.0 - (4_f64 / 3_f64) * p).ln())
+}
+
+pub fn k80(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+    let mut count_L: usize = 0;
+    let mut ts: usize = 0;
+    let mut tv: usize = 0;
+
+    for i in 0..target.seq.len() {
+        if (query.seq[i] & 8) == 8 && query.seq[i] == target.seq[i] { // are the bases certainly the same
+            count_L += 1;
+        } else if (query.seq[i] & target.seq[i]) < 16 { // they are certainly different
+            if (query.seq[i] & 55) == 0 && (target.seq[i] & 55) == 0 { // both are purines, this is a transition
+                ts += 1;
+                count_L += 1;
+            } else if (query.seq[i] & 199) == 0 && (target.seq[i] & 199) == 0 { // both are pyramidines, this is a transition
+                ts += 1;
+                count_L += 1;
+            } else if ((query.seq[i] & 55) == 0 && (target.seq[i] & 199) == 0) 
+                      || ((query.seq[i] & 199) == 0 && (target.seq[i] & 55) == 0) { // one of each, this is a transversion
+                tv += 1; 
+                count_L += 1;
+            }
+        }
+    }
+
+    let P = ts as f64 / count_L as f64;
+    let Q = tv as f64 / count_L as f64;
+    
+    FloatInt::Float(-0.5 * ((1.0 - 2.0*P - Q) * (1.0 - 2.0*Q).sqrt()).ln())
 }
 
 pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
@@ -79,44 +151,3 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     FloatInt::Float(-k1 * w1.ln() - k2 * w2.ln() - k3 * w3.ln()) // d!
 }
 
-pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
-    let mut d: i64 = 0;
-    for i in 0..target.seq.len() {
-        if query.seq[i] & target.seq[i] < 16 {
-            d += 1;
-        }
-    }
-    FloatInt::Int(d)
-}
-
-pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
-    let mut d = 0.0;
-    let mut n = 0.0;
-    for i in 0..target.seq.len() {
-        if query.seq[i] & 8 == 8 && query.seq[i] == target.seq[i] {
-            d += 1.0;
-        } else if query.seq[i] & target.seq[i] < 16 {
-            d += 1.0;
-            n += 1.0;
-        }
-    }
-
-    FloatInt::Float(n / d)
-}
-
-pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
-    let mut d = 0.0;
-    let mut n = 0.0;
-    for i in 0..target.seq.len() {
-        if query.seq[i] & 8 == 8 && query.seq[i] == target.seq[i] {
-            d += 1.0;
-        } else if query.seq[i] & target.seq[i] < 16 {
-            d += 1.0;
-            n += 1.0;
-        }
-    }
-
-    let p = n / d;
-
-    FloatInt::Float(-0.75 * (1.0 - (4_f64 / 3_f64) * p).ln())
-}
