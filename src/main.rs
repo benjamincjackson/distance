@@ -49,6 +49,7 @@ fn main() -> io::Result<()> {
             .short('t')
             .long("threads")
             .takes_value(true)
+            .default_value("1")
             .help("how many threads to spin up for pairwise comparisons"))
         .arg(Arg::new("input")
             .short('i')
