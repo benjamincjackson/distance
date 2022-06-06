@@ -44,6 +44,7 @@ struct Distance {
 fn main() -> io::Result<()> {
 
     let m = Command::new("distance")
+        .version("0.1.0")
         .arg(Arg::new("threads")
             .short('t')
             .long("threads")
