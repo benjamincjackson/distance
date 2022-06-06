@@ -33,11 +33,11 @@ and check it worked:
 
 ## Usage
 
-You can calculate all pairwise distances within a single alignmet by providing a single input file, like:
+You can calculate all pairwise distances within a single alignment by providing a single input file, like:
 
 `distance -i alignment.fasta -o distances.tsv`
 
-or all pairwise comparisons between two files like:
+or all pairwise comparisons between two alignments like:
 
 `distance -i alignment1.fasta alignment2.fasta -o distances2.tsv`
 
