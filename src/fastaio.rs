@@ -37,7 +37,6 @@ pub struct EncodedFastaRecord {
     pub count_T: usize,
     pub count_G: usize,
     pub count_C: usize,
-    pub differences: Vec<usize>,
 }
 
 impl EncodedFastaRecord {
@@ -50,7 +49,6 @@ impl EncodedFastaRecord {
             count_T: 0,
             count_C: 0,
             count_G: 0,
-            differences: Vec::new(),
         }
     }
     fn newknownwidth(w: usize) -> EncodedFastaRecord {
@@ -62,7 +60,6 @@ impl EncodedFastaRecord {
             count_T: 0,
             count_C: 0,
             count_G: 0,
-            differences: Vec::new(),
         }
     }
     fn count_bases(&mut self) {
