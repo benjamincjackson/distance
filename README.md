@@ -1,6 +1,6 @@
 # distance
 
-A command-line program to calculate pairwise evolutionary distances within or between alignments of DNA sequences in fasta format.
+A command-line program to calculate pairwise genetic distances within or between alignments of DNA sequences in fasta format.
 
 This program is a work in progress and may contain bugs. It was written primarily as a vehicle for learning Rust.
 
