@@ -2,7 +2,7 @@
 
 A command-line program to calculate pairwise genetic distances within or between alignments of DNA sequences in fasta format.
 
-This program is a work in progress and may contain bugs. It was written primarily as a vehicle for learning Rust.
+This program is a work in progress. It was written primarily as a vehicle for learning Rust.
 
 ## Installation
 
@@ -67,9 +67,11 @@ Use the `-t` option to use spin up multiple threads for pairwise comparisons (in
 distance -t 8 -m jc69 -i aligned.fasta -o jc69.tsv
 ```
 
-`❯ distance -h`:
+## Help
 
 ```
+> distance -h
+
 distance 0.1.0
 
 USAGE:
@@ -85,3 +87,6 @@ OPTIONS:
     -V, --version              Print version information
 ```
 
+## Acknowledgements
+
+This program makes use of the [bitwise coding scheme for nucleotides](http://ape-package.ird.fr/misc/BitLevelCodingScheme.html) by Emmanuel Paradis, as used in ape ([Paradis, 2004](https://doi.org/10.1093/bioinformatics/btg412)). Equation (7) in Tamura and Nei ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) is also rearranged according to ape's source code.
