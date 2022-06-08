@@ -156,7 +156,8 @@ fn main() -> io::Result<()> {
                     id2: message.seq2.id.clone(),
                     dist: d,
                     idx: message.idx,
-                });
+                })
+                .unwrap();
             }
             drop(wg_dist);
         });
