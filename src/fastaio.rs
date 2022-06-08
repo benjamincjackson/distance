@@ -37,6 +37,7 @@ pub struct EncodedFastaRecord {
     pub count_T: usize,
     pub count_G: usize,
     pub count_C: usize,
+    pub differences: Vec<usize>,
 }
 
 impl EncodedFastaRecord {
@@ -49,6 +50,7 @@ impl EncodedFastaRecord {
             count_T: 0,
             count_C: 0,
             count_G: 0,
+            differences: vec![0; 0],
         }
     }
     fn newknownwidth(w: usize) -> EncodedFastaRecord {
@@ -60,6 +62,7 @@ impl EncodedFastaRecord {
             count_T: 0,
             count_C: 0,
             count_G: 0,
+            differences: vec![0; 0],
         }
     }
     fn count_bases(&mut self) {
@@ -70,6 +73,14 @@ impl EncodedFastaRecord {
                 72 => self.count_G += 1,
                 40 => self.count_C += 1,
                 _ => continue,
+            }
+        }
+    }
+    pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
+        self.differences.clear();
+        for i in 0..self.seq.len() {
+            if (self.seq[i] & other.seq[i]) < 16 {
+                self.differences.push(i);
             }
         }
     }
@@ -234,7 +245,8 @@ pub fn fasta_consensus(files: Vec<&str>) -> io::Result<FastaRecord> {
     let w = widths[0];
     let mut counts: Vec<Vec<usize>> = vec![vec![0; 17]; w];
 
-    let mut lookup: [usize; 256] = [17; 256];
+    let mut lookup: [usize; 256] = [0; 256];
+    // let mut lookup: [usize; 256] = [17; 256];
     lookup['A' as usize] = 0;
     lookup['a' as usize] = 0;
     lookup['G' as usize] = 1;
@@ -243,30 +255,30 @@ pub fn fasta_consensus(files: Vec<&str>) -> io::Result<FastaRecord> {
     lookup['c' as usize] = 2;
     lookup['T' as usize] = 3;
     lookup['t' as usize] = 3;
-    lookup['R' as usize] = 4;
-    lookup['r' as usize] = 4;
-    lookup['M' as usize] = 5;
-    lookup['m' as usize] = 5;
-    lookup['W' as usize] = 6;
-    lookup['w' as usize] = 6;
-    lookup['S' as usize] = 7;
-    lookup['s' as usize] = 7;
-    lookup['K' as usize] = 8;
-    lookup['k' as usize] = 8;
-    lookup['Y' as usize] = 9;
-    lookup['y' as usize] = 9;
-    lookup['V' as usize] = 10;
-    lookup['v' as usize] = 10;
-    lookup['H' as usize] = 11;
-    lookup['h' as usize] = 11;
-    lookup['D' as usize] = 12;
-    lookup['d' as usize] = 12;
-    lookup['B' as usize] = 13;
-    lookup['b' as usize] = 13;
-    lookup['N' as usize] = 14;
-    lookup['n' as usize] = 14;
-    lookup['-' as usize] = 15;
-    lookup['?' as usize] = 16;
+    // lookup['R' as usize] = 4;
+    // lookup['r' as usize] = 4;
+    // lookup['M' as usize] = 5;
+    // lookup['m' as usize] = 5;
+    // lookup['W' as usize] = 6;
+    // lookup['w' as usize] = 6;
+    // lookup['S' as usize] = 7;
+    // lookup['s' as usize] = 7;
+    // lookup['K' as usize] = 8;
+    // lookup['k' as usize] = 8;
+    // lookup['Y' as usize] = 9;
+    // lookup['y' as usize] = 9;
+    // lookup['V' as usize] = 10;
+    // lookup['v' as usize] = 10;
+    // lookup['H' as usize] = 11;
+    // lookup['h' as usize] = 11;
+    // lookup['D' as usize] = 12;
+    // lookup['d' as usize] = 12;
+    // lookup['B' as usize] = 13;
+    // lookup['b' as usize] = 13;
+    // lookup['N' as usize] = 14;
+    // lookup['n' as usize] = 14;
+    // lookup['-' as usize] = 15;
+    // lookup['?' as usize] = 16;
 
     for file in files {
     
@@ -310,8 +322,11 @@ pub fn fasta_consensus(files: Vec<&str>) -> io::Result<FastaRecord> {
         }
     }
 
-    let back_translate: [char; 17] = [
-        'A', 'G', 'C', 'T', 'R', 'M', 'W', 'S', 'K', 'Y', 'V', 'H', 'D', 'B', 'N', '-', '?',
+    // let back_translate: [char; 17] = [
+    //     'A', 'G', 'C', 'T', 'R', 'M', 'W', 'S', 'K', 'Y', 'V', 'H', 'D', 'B', 'N', '-', '?',
+    // ];
+    let back_translate: [char; 4] = [
+        'A', 'G', 'C', 'T',
     ];
 
     let mut consensus = String::new();

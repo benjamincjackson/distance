@@ -24,6 +24,7 @@ impl Pair {
         match measure {
             "raw" => raw(&self.seq1, &self.seq2),
             "n" => snp(&self.seq1, &self.seq2),
+            "n2" => snp2(&self.seq1, &self.seq2),
             "jc69" => jc69(&self.seq1, &self.seq2),
             "k80" => k80(&self.seq1, &self.seq2),
             "tn93" => tn93(&self.seq1, &self.seq2),
@@ -64,7 +65,7 @@ fn main() -> io::Result<()> {
             .long("measure")
             .takes_value(true)
             .default_value("raw")
-            .possible_values(["n", "raw", "jc69", "k80", "tn93"])
+            .possible_values(["n", "n2", "raw", "jc69", "k80", "tn93"])
             .help("which distance measure to use"))
         .arg(Arg::new("output")
             .short('o')
@@ -88,6 +89,14 @@ fn main() -> io::Result<()> {
 
     if inputs.len() == 1 {
         let mut efra = populate_struct_array(inputs[0])?;
+        if measure == "n2" {
+            let consen = fasta_consensus(inputs)
+                .unwrap()
+                .encode();
+            for i in 0..efra.len() {
+                efra[i].get_differences(&consen);
+            }
+        }
         thread::spawn({
             move || {
                 generate_pairs_square(efra, pair_sender);
@@ -96,6 +105,17 @@ fn main() -> io::Result<()> {
     } else {
         let mut efra1 = populate_struct_array(inputs[0])?;
         let mut efra2 = populate_struct_array(inputs[1])?;
+        if measure == "n2" {
+            let consen = fasta_consensus(inputs)
+                .unwrap()
+                .encode();
+            for i in 0..efra1.len() {
+                efra1[i].get_differences(&consen);
+            }                   
+            for i in 0..efra2.len() {
+                efra2[i].get_differences(&consen);
+            }
+        }
         thread::spawn({
             move || {
                 generate_pairs_rect(efra1, efra2, pair_sender);

@@ -17,6 +17,26 @@ pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
     FloatInt::Int(d)
 }
 
+pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+    let mut d: i64 = 0;
+
+    for idx in query.differences.iter() {
+        if (query.seq[*idx] & target.seq[*idx]) < 16 {
+            d += 1;
+        }
+    }
+    for idx in target.differences.iter() {
+        if query.differences.binary_search(idx).is_ok() {
+            continue
+        }
+        if (query.seq[*idx] & target.seq[*idx]) < 16 {
+            d += 1;
+        }
+    }
+    
+    FloatInt::Int(d)
+}
+
 pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d = 0.0;
     let mut n = 0.0;
