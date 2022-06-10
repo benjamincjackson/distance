@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{BufWriter, Write};
+use std::sync::Arc;
 use std::thread;
 
 mod fastaio;
@@ -15,23 +16,9 @@ use crate::distance::*;
 
 #[derive(Clone)]
 struct Pair {
-    seq1: EncodedFastaRecord,
-    seq2: EncodedFastaRecord,
-    idx: usize,
-}
-impl Pair {
-    fn distance(&self, measure: &str) -> FloatInt {
-        match measure {
-            "raw" => raw(&self.seq1, &self.seq2),
-            "n" => snp(&self.seq1, &self.seq2),
-            "n2" => snp2(&self.seq1, &self.seq2),
-            "jc69" => jc69(&self.seq1, &self.seq2),
-            "k80" => k80(&self.seq1, &self.seq2),
-            "tn93" => tn93(&self.seq1, &self.seq2),
-            // should never get this far because the options are defined in the clap cli:
-            _ => panic!("unknown distance measure"),
-        }
-    }
+    seq1_idx: usize,
+    seq2_idx: usize,
+    idx_counter: usize,
 }
 
 #[derive(Clone)]
@@ -87,38 +74,26 @@ fn main() -> io::Result<()> {
         .unwrap()
         .to_owned();
 
+    let efras = populate_struct_array(&inputs, &measure)
+                .unwrap();
+
+    let mut ns = vec![];
+    for efra in &efras {
+        ns.push(efra.len());
+    }
+
+    let arc = Arc::new(efras);
+
     if inputs.len() == 1 {
-        let mut efra = populate_struct_array(inputs[0])?;
-        if measure == "n2" {
-            let consen = fasta_consensus(inputs)
-                .unwrap()
-                .encode();
-            for i in 0..efra.len() {
-                efra[i].get_differences(&consen);
-            }
-        }
         thread::spawn({
             move || {
-                generate_pairs_square(efra, pair_sender);
+                generate_pairs_square(ns[0], pair_sender);
             }
         });
     } else {
-        let mut efra1 = populate_struct_array(inputs[0])?;
-        let mut efra2 = populate_struct_array(inputs[1])?;
-        if measure == "n2" {
-            let consen = fasta_consensus(inputs)
-                .unwrap()
-                .encode();
-            for i in 0..efra1.len() {
-                efra1[i].get_differences(&consen);
-            }                   
-            for i in 0..efra2.len() {
-                efra2[i].get_differences(&consen);
-            }
-        }
         thread::spawn({
             move || {
-                generate_pairs_rect(efra1, efra2, pair_sender);
+                generate_pairs_rect(ns[0], ns[1], pair_sender);
             }
         });
     }
@@ -148,14 +123,24 @@ fn main() -> io::Result<()> {
     for worker in workers {
         let wg_dist = wg_dist.clone();
         let measure = measure.clone();
+        let arc = arc.clone();
         thread::spawn(move || {
             for message in worker.0.iter() {
-                let d = message.distance(&measure);
+                let d = match measure.as_str() {
+                    "raw" => raw(&arc[0][message.seq1_idx], &arc[arc.len()-1][message.seq2_idx]),
+                    "n" => snp(&arc[0][message.seq1_idx], &arc[arc.len()-1][message.seq2_idx]),
+                    "n2" => snp2(&arc[0][message.seq1_idx], &arc[arc.len()-1][message.seq2_idx]),
+                    "jc69" => jc69(&arc[0][message.seq1_idx], &arc[arc.len()-1][message.seq2_idx]),
+                    "k80" => k80(&arc[0][message.seq1_idx], &arc[arc.len()-1][message.seq2_idx]),
+                    "tn93" => tn93(&arc[0][message.seq1_idx], &arc[arc.len()-1][message.seq2_idx]),
+                    // should never get this far because the options are defined in the cli:
+                    _ => panic!("unknown distance measure"),
+                };
                 worker.1.send(Distance {
-                    id1: message.seq1.id.clone(),
-                    id2: message.seq2.id.clone(),
+                    id1: arc[0][message.seq1_idx].id.clone(),
+                    id2: arc[arc.len()-1][message.seq1_idx].id.clone(),
                     dist: d,
-                    idx: message.idx,
+                    idx: message.idx_counter,
                 })
                 .unwrap();
             }
@@ -171,15 +156,15 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn generate_pairs_square(sequences: Vec<EncodedFastaRecord>, sender: Sender<Pair>) {
+fn generate_pairs_square(n: usize, sender: Sender<Pair>) {
     let mut counter: usize = 0;
-    for i in 0..sequences.len() - 1 {
-        for j in i + 1..sequences.len() {
+    for i in 0..n - 1 {
+        for j in i + 1..n {
             sender
                 .send(Pair {
-                    seq1: sequences[i].clone(),
-                    seq2: sequences[j].clone(),
-                    idx: counter,
+                    seq1_idx: i,
+                    seq2_idx: j,
+                    idx_counter: counter,
                 })
                 .unwrap();
             counter += 1;
@@ -188,15 +173,15 @@ fn generate_pairs_square(sequences: Vec<EncodedFastaRecord>, sender: Sender<Pair
     drop(sender);
 }
 
-fn generate_pairs_rect(sequences1: Vec<EncodedFastaRecord>, sequences2: Vec<EncodedFastaRecord>, sender: Sender<Pair>) {
+fn generate_pairs_rect(n1: usize, n2: usize, sender: Sender<Pair>) {
     let mut counter: usize = 0;
-    for i in 0..sequences1.len() {
-        for j in 0..sequences2.len() {
+    for i in 0..n1 {
+        for j in 0..n2 {
             sender
                 .send(Pair {
-                    seq1: sequences1[i].clone(),
-                    seq2: sequences2[j].clone(),
-                    idx: counter,
+                    seq1_idx: i,
+                    seq2_idx: j,
+                    idx_counter: counter,
                 })
                 .unwrap();
             counter += 1;
