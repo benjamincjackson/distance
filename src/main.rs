@@ -222,7 +222,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, sender: Sender<Pair>) {
 }
 
 // Write the distances as they arrive. Uses a hashmap whos keys are indices to write the results in the
-// order they are produced by generate_pairs_*5()
+// order they are produced by generate_pairs_*()
 fn gather_write(filename: &str, rx: Receiver<Distance>) -> io::Result<()> {
     let f = File::create(filename)?;
     let mut buf = BufWriter::new(f);

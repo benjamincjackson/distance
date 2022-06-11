@@ -8,7 +8,7 @@ pub enum FloatInt {
 }
 
 // Conventional snp-distance. Compares every site in the alignment. Might be faster than snp2
-// for high diversity datasets/
+// for high diversity datasets.
 // This is -m n_high in the CLI
 pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d: i64 = 0;
@@ -21,7 +21,7 @@ pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
 }
 
 // Reduced snp-distance. Only compares sites that differ from the alignment(s)'s consensus in
-// either record. Is fast in low-diversity datasets
+// either record. Is fast in low-diversity datasets.
 // This is -m n in the CLI
 pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d: i64 = 0;
@@ -131,7 +131,7 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
         + target.count_G as f64
         + query.count_G as f64)
         / L as f64;
-        
+
     let g_Y: f64 = (target.count_C as f64
         + query.count_C as f64
         + target.count_T as f64
