@@ -8,12 +8,14 @@ use std::io::{Error, ErrorKind};
 mod encoding;
 use encoding::*;
 
+// One (unencoded) fasta record. Currently unused
 pub struct FastaRecord {
     pub id: String,
     pub description: String,
     pub seq: String,
 }
 impl FastaRecord {
+    // Encode a plain fasta record
     pub fn encode(&self) -> EncodedFastaRecord {
         let mut EFR = EncodedFastaRecord::newknownwidth(self.seq.len());
         EFR.id = self.id.clone();
@@ -28,16 +30,17 @@ impl FastaRecord {
     }
 }
 
+// One encoded fasta record.
 #[derive(Clone)]
 pub struct EncodedFastaRecord {
     pub id: String,
     pub description: String,
     pub seq: Vec<u8>,
-    pub count_A: usize,
+    pub count_A: usize, // the base contents are needed to calculate tn93 distance
     pub count_T: usize,
     pub count_G: usize,
     pub count_C: usize,
-    pub differences: Vec<usize>,
+    pub differences: Vec<usize>, // differences from the consensus - makes for fast snp-distances for low-diversity datasets
 }
 
 impl EncodedFastaRecord {
@@ -86,6 +89,7 @@ impl EncodedFastaRecord {
     }
 }
 
+// How wide is the alignment
 pub fn align_width(filename: &str) -> io::Result<usize> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
@@ -113,6 +117,8 @@ pub fn align_width(filename: &str) -> io::Result<usize> {
     Ok(w)
 }
 
+// Read and encode input files to a vector (of vectors of structs)
+// First dimension is file, second dimension is sequence record.
 pub fn populate_struct_array(files: &Vec<&str>, measure: &str) -> io::Result<Vec<Vec<EncodedFastaRecord>>> {
 
     let mut widths: Vec<usize> = vec![0; files.len()];
@@ -175,15 +181,19 @@ pub fn populate_struct_array(files: &Vec<&str>, measure: &str) -> io::Result<Vec
         structs_vec.push(structs);
     }
 
+    // Need to do some extra work depending on which distance measure is used.
     match measure {
-        "n2" => {
-            let consensus = fasta_consensus(&structs_vec);
+        // For the fast snp-distance, need to calculate the consensus then get the differences from 
+        // it for each record (in each file)
+        "n" => {
+            let consensus = consensus(&structs_vec);
             for i in 0..structs_vec.len() {
                 for j in 0..structs_vec[i].len() {
                     structs_vec[i][j].get_differences(&consensus);
                 }
             }
         }
+        // For Tamura and Nei (1993), need to calculate the base content of each record.
         "tn93" => {
             for i in 0..structs_vec.len() {
                 for j in 0..structs_vec[i].len() {
@@ -197,17 +207,24 @@ pub fn populate_struct_array(files: &Vec<&str>, measure: &str) -> io::Result<Vec
     Ok(structs_vec)
 }
 
-pub fn fasta_consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaRecord {
+// Calculate the (ATGC) consensus sequence from all the input data held in memory
+pub fn consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaRecord {
 
+    // Alignment width
     let w = efras[0][0].seq.len();
+    // Counts of ATGC for each alignment column
     let mut counts: Vec<Vec<usize>> = vec![vec![0; 4]; w];
 
+    // for looking up the encoded bases. Non-ATGC characters map to A, which is fine
+    // as we don't really care what the consensus sequence actually is, just that it
+    // enables us to reduce the computational burden
     let mut lookup: [usize; 256] = [0; 256];
     lookup[136] = 0;
     lookup[72] = 1;
     lookup[40] = 2;
     lookup[24] = 3;
 
+    // For every record, at every alignment column, count which base occurs
     for efra in efras {
         for record in efra {
             for i in 0..record.seq.len() {
@@ -217,6 +234,7 @@ pub fn fasta_consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaReco
         }
     }
 
+    // For back-translating the counts to (encoded) nucleotides
     let back_translate: [u8; 4] = [
         136, 72, 40, 24,
     ];

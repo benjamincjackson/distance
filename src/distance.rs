@@ -1,12 +1,15 @@
-use std::collections::HashSet;
 use crate::fastaio::EncodedFastaRecord;
 
-#[derive(Clone)]
+// We can return this for all the distance-generating functions instead of 
+// switching on whether they return a float or an integer measure
 pub enum FloatInt {
     Float(f64),
     Int(i64),
 }
 
+// Conventional snp-distance. Compares every site in the alignment. Might be faster than snp2
+// for high diversity datasets/
+// This is -m n_high in the CLI
 pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d: i64 = 0;
     for i in 0..target.seq.len() {
@@ -17,6 +20,9 @@ pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
     FloatInt::Int(d)
 }
 
+// Reduced snp-distance. Only compares sites that differ from the alignment(s)'s consensus in
+// either record. Is fast in low-diversity datasets
+// This is -m n in the CLI
 pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d: i64 = 0;
 
@@ -26,6 +32,7 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
         }
     }
     for idx in target.differences.iter() {
+        // if this site is different from the consensus in seq1 too, we've already tested it, so skip it here
         if query.differences.binary_search(idx).is_ok() {
             continue
         }
@@ -37,6 +44,7 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     FloatInt::Int(d)
 }
 
+// Number of nucleotide differences *per site*
 pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d = 0.0;
     let mut n = 0.0;
@@ -52,6 +60,7 @@ pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
     FloatInt::Float(n / d)
 }
 
+// Jukes and Cantor's (1969) evolutionary distance
 pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d = 0.0;
     let mut n = 0.0;
@@ -69,6 +78,7 @@ pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     FloatInt::Float(-0.75 * (1.0 - (4_f64 / 3_f64) * p).ln())
 }
 
+// Kimura's (1980) evolutionary distance
 pub fn k80(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut count_L: usize = 0;
     let mut ts: usize = 0;
@@ -98,6 +108,7 @@ pub fn k80(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
     FloatInt::Float(-0.5 * ((1.0 - 2.0*P - Q) * (1.0 - 2.0*Q).sqrt()).ln())
 }
 
+// Tamura and Nei's (1993) evolutionary distance
 pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     // Total ATGC length of the two sequences
     let L: usize = query.count_A
@@ -120,6 +131,7 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
         + target.count_G as f64
         + query.count_G as f64)
         / L as f64;
+        
     let g_Y: f64 = (target.count_C as f64
         + query.count_C as f64
         + target.count_T as f64
