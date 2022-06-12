@@ -128,7 +128,7 @@ fn main() -> io::Result<()> {
         .unwrap();
 
     if threads < 1 {
-        let threads = 1;
+        threads = 1;
     }
 
     // A vector of receiver/sender tuples, cloned to share between each thread in threads.
