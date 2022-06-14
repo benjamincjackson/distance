@@ -224,6 +224,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, sender: Sender<Pair>) {
 // Write the distances as they arrive. Uses a hashmap whos keys are indices to write the results in the
 // order they are produced by generate_pairs_*()
 fn gather_write(filename: &str, rx: Receiver<Distance>) -> io::Result<()> {
+    
     let f = File::create(filename)?;
     let mut buf = BufWriter::new(f);
     writeln!(buf, "sequence1\tsequence2\tdistance")?;
@@ -234,24 +235,14 @@ fn gather_write(filename: &str, rx: Receiver<Distance>) -> io::Result<()> {
 
     for r in rx.iter() {
         m.insert(r.idx, r);
-
-        if m.contains_key(&counter) {
+        while m.contains_key(&counter) {
             let r = m.remove(&counter).unwrap();
             match r.dist {
                 FloatInt::Int(d) => writeln!(buf, "{}\t{}\t{}", &r.id1, &r.id2, d)?,
                 FloatInt::Float(d) => writeln!(buf, "{}\t{}\t{}", &r.id1, &r.id2, d)?,
             }
-            counter += 1;
+            counter += 1;            
         }
-    }
-
-    while !m.is_empty() {
-        let r = m.remove(&counter).unwrap();
-        match r.dist {
-            FloatInt::Int(d) => writeln!(buf, "{}\t{}\t{}", &r.id1, &r.id2, d)?,
-            FloatInt::Float(d) => writeln!(buf, "{}\t{}\t{}", &r.id1, &r.id2, d)?,
-        }
-        counter += 1;
     }
 
     Ok(())
