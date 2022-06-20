@@ -78,13 +78,15 @@ USAGE:
     distance [OPTIONS] --input <input>... --output <output>
 
 OPTIONS:
-    -h, --help                 Print help information
-    -i, --input <input>...     input alignment(s) in fasta format
-    -m, --measure <measure>    which distance measure to use [default: raw] [possible values: n,
-                               raw, jc69, k80, tn93]
-    -o, --output <output>      output file in tab-separated-value format
-    -t, --threads <threads>    how many threads to spin up for pairwise comparisons
-    -V, --version              Print version information
+    -b, --batchsize <batchsize>    try setting this >(>) 1 if you are struggling to get a speedup
+                                   when adding threads [default: 1]
+    -h, --help                     Print help information
+    -i, --input <input>...         input alignment(s) in fasta format
+    -m, --measure <measure>        which distance measure to use [default: raw] [possible values: n,
+                                   n_high, raw, jc69, k80, tn93]
+    -o, --output <output>          output file in tab-separated-value format
+    -t, --threads <threads>        how many threads to spin up for pairwise comparisons [default: 1]
+    -V, --version                  Print version information
 ```
 
 ## Acknowledgements
