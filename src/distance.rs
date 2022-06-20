@@ -2,6 +2,7 @@ use crate::fastaio::EncodedFastaRecord;
 
 // We can return this for all the distance-generating functions instead of 
 // switching on whether they return a float or an integer measure
+#[derive(Clone)]
 pub enum FloatInt {
     Float(f64),
     Int(i64),
