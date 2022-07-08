@@ -41,7 +41,11 @@ or all pairwise comparisons between two alignments like:
 
 `distance -i alignment1.fasta alignment2.fasta -o distances2.tsv`
 
-All alignments are read into memory.
+All alignments provided to -i are read into memory.
+
+You can also calculate all pairwise distances between one alignment in memory and one alignment streamed from disk, using the `-s / --stream` flag, like:
+
+`distance -i aSmallAlignment.fasta -s aBigAlignment.fasta -o distances3.tsv`
 
 The output is a tab-separated-value file with three columns:
 
@@ -59,7 +63,7 @@ seq1	seq9	0.0007885624164295265
 seq1	seq10	0.001381740301910256
 ```
 
-Different distance measures are available. These are `n` - the total number of nucleotide differences, `n_high` - should give exactly the same answer as `n` but might be faster for very high diversity datasets (?), otherwise is likely considerably slower for large numbers of comparisons, `raw` - the number of nucleotide differences _per site_, `jc69` - Jukes and Cantor's ([1969](https://books.google.co.uk/books?id=FDHLBAAAQBAJ&lpg=PA21&ots=bmgnXDW6mB&dq=jukes%20cantor%201969&lr&pg=PA34#v=onepage&q=jukes%20cantor%201969&f=false)) evolutionary distance, `k80` - Kimura's ([1980](https://doi.org/10.1007/bf01731581)) evolutionary distance, and `tn93` - Tamura and Nei's ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) evolutionary distance.
+Different distance measures are available. These are `n` - the total number of nucleotide differences, `n_high` - should give exactly the same answer as `n` but might be faster for very high diversity datasets (?) or when streaming a large file from disk, `raw` - the number of nucleotide differences _per site_, `jc69` - Jukes and Cantor's ([1969](https://books.google.co.uk/books?id=FDHLBAAAQBAJ&lpg=PA21&ots=bmgnXDW6mB&dq=jukes%20cantor%201969&lr&pg=PA34#v=onepage&q=jukes%20cantor%201969&f=false)) evolutionary distance, `k80` - Kimura's ([1980](https://doi.org/10.1007/bf01731581)) evolutionary distance, and `tn93` - Tamura and Nei's ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) evolutionary distance.
 
 Use the `-t` option to use spin up multiple threads for pairwise comparisons (in addition to a thread for i/o), e.g.:
 
@@ -81,14 +85,16 @@ OPTIONS:
     -b, --batchsize <batchsize>    try setting this >(>) 1 if you are struggling to get a speedup
                                    when adding threads [default: 1]
     -h, --help                     Print help information
-    -i, --input <input>...         input alignment(s) in fasta format
+    -i, --input <input>...         Input alignment file(s) in fasta format. Loaded into memory.
     -m, --measure <measure>        which distance measure to use [default: raw] [possible values: n,
                                    n_high, raw, jc69, k80, tn93]
     -o, --output <output>          output file in tab-separated-value format
+    -s, --stream <stream>          Input alignment file in fasta format. Streamed from disk.
+                                   Requires exactly one file also be specifed to -i.
     -t, --threads <threads>        how many threads to spin up for pairwise comparisons [default: 1]
     -V, --version                  Print version information
 ```
 
 ## Acknowledgements
 
-This program makes use of the [bitwise coding scheme for nucleotides](http://ape-package.ird.fr/misc/BitLevelCodingScheme.html) by Emmanuel Paradis, as used in ape ([Paradis, 2004](https://doi.org/10.1093/bioinformatics/btg412)). Equation (7) in Tamura and Nei ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) is also rearranged according to ape's source code.
+This program incorporates [rust-bio](https://rust-bio.github.io/). This program makes use of the [bitwise coding scheme for nucleotides](http://ape-package.ird.fr/misc/BitLevelCodingScheme.html) by Emmanuel Paradis, as used in ape ([Paradis, 2004](https://doi.org/10.1093/bioinformatics/btg412)). Equation (7) in Tamura and Nei ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) is also rearranged according to ape's source code.

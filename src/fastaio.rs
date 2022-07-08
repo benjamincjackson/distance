@@ -1,34 +1,14 @@
+use std::io::BufReader;
+use std::io::BufRead;
 use std::fs::File;
 use std::io;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::{Error, ErrorKind};
+use crossbeam_channel::{Sender};
+use bio::io::fasta;
+use bio::io::fasta::{Record};
 
 #[path = "encoding.rs"]
 mod encoding;
 use encoding::*;
-
-// One (unencoded) fasta record. Currently unused
-pub struct FastaRecord {
-    pub id: String,
-    pub description: String,
-    pub seq: String,
-}
-impl FastaRecord {
-    // Encode a plain fasta record
-    pub fn encode(&self) -> EncodedFastaRecord {
-        let mut EFR = EncodedFastaRecord::newknownwidth(self.seq.len());
-        EFR.id = self.id.clone();
-        EFR.description = self.description.clone();
-
-        let a = encoding_array();
-        for i in 0..self.seq.len() {
-            EFR.seq[i] = a[self.seq.as_bytes()[i] as usize];
-        }
-
-        EFR
-    }
-}
 
 // One encoded fasta record.
 #[derive(Clone)]
@@ -41,6 +21,7 @@ pub struct EncodedFastaRecord {
     pub count_G: usize,
     pub count_C: usize,
     pub differences: Vec<usize>, // differences from the consensus - makes for fast snp-distances for low-diversity datasets
+    pub idx: usize,
 }
 
 impl EncodedFastaRecord {
@@ -54,9 +35,10 @@ impl EncodedFastaRecord {
             count_C: 0,
             count_G: 0,
             differences: vec![0; 0],
+            idx: 0,
         }
     }
-    fn newknownwidth(w: usize) -> EncodedFastaRecord {
+    fn new_known_width(w: usize) -> EncodedFastaRecord {
         EncodedFastaRecord {
             id: String::new(),
             description: String::new(),
@@ -66,18 +48,22 @@ impl EncodedFastaRecord {
             count_C: 0,
             count_G: 0,
             differences: vec![0; 0],
+            idx: 0,
         }
     }
     fn count_bases(&mut self) {
+        self.count_A = 0;
+        self.count_T = 0;
+        self.count_G = 0;
+        self.count_C = 0;
+        let mut counting = [0; 256];
         for i in 0..self.seq.len() {
-            match self.seq[i] {
-                136 => self.count_A += 1,
-                24 => self.count_T += 1,
-                72 => self.count_G += 1,
-                40 => self.count_C += 1,
-                _ => continue,
-            }
+            counting[self.seq[i] as usize] += 1
         }
+        self.count_A = counting[136];
+        self.count_T = counting[24];
+        self.count_G = counting[72];
+        self.count_C = counting[40];
     }
     pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
         self.differences.clear();
@@ -89,95 +75,124 @@ impl EncodedFastaRecord {
     }
 }
 
-// How wide is the alignment
-pub fn align_width(filename: &str) -> io::Result<usize> {
-    let f = File::open(filename)?;
-    let reader = BufReader::new(f);
+#[derive(Clone)]
+pub struct Records {
+    pub records: Vec<EncodedFastaRecord>,
+    pub idx: usize,
+}
 
-    let mut w = 0;
-    let mut n = 0;
-    let mut l = String::new();
+fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
+    
+    let ea  = encoding_array();
+    let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
 
-    for line in reader.lines() {
-        l = line.unwrap();
-
-        if l.starts_with('>') {
-            n += 1;
+    efr.id = record.id().to_string();
+    match record.desc() {
+        Some(desc) => efr.description = desc.to_string(),
+        None => (),
+    }
+    
+    for (i, nuc) in record.seq().iter().enumerate() {
+        if ea[*nuc as usize] == 0 {
+            let mut message = "invalid nucleotide character in record: ".to_string();
+            message.push(*nuc as char);
+            return Err(message)
         }
+        efr.seq[i] = ea[*nuc as usize]
+    }
 
-        if n == 2 {
-            break;
+    Ok(efr)
+}
+
+fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String> {
+    
+    let ea  = encoding_array();
+    let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
+
+    let mut counting = [0; 256];
+
+    efr.id = record.id().to_string();
+    match record.desc() {
+        Some(desc) => efr.description = desc.to_string(),
+        None => (),
+    }
+    
+    for (i, nuc) in record.seq().iter().enumerate() {
+        if ea[*nuc as usize] == 0 {
+            let mut message = "invalid nucleotide character in record: ".to_string();
+            message.push(*nuc as char);
+            return Err(message)
         }
+        efr.seq[i] = ea[*nuc as usize];
+        counting[*nuc as usize] += 1;
+    }
 
-        if n == 1 && !l.starts_with('>') {
-            w += l.chars().count();
+    efr.count_A = counting['A' as usize];
+    efr.count_T = counting['T' as usize];
+    efr.count_G = counting['G' as usize];
+    efr.count_C = counting['C' as usize];
+
+    Ok(efr)
+}
+
+fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result<EncodedFastaRecord, String> {
+    
+    let ea  = encoding_array();
+    let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
+
+    efr.id = record.id().to_string();
+    match record.desc() {
+        Some(desc) => efr.description = desc.to_string(),
+        None => (),
+    }
+    
+    for (i, nuc) in record.seq().iter().enumerate() {
+        if ea[*nuc as usize] == 0 {
+            let mut message = "invalid nucleotide character in record: ".to_string();
+            message.push(*nuc as char);
+            return Err(message)
+        }
+        efr.seq[i] = ea[*nuc as usize];
+        if (efr.seq[i] & other.seq[i]) < 16 {
+            efr.differences.push(i)
         }
     }
 
-    Ok(w)
+    Ok(efr)
 }
 
-// Read and encode input files to a vector (of vectors of structs)
-// First dimension is file, second dimension is sequence record.
-pub fn populate_struct_array(files: &Vec<&str>, measure: &str) -> io::Result<Vec<Vec<EncodedFastaRecord>>> {
-
+// Load the records in a list of fasta files into a vector of vector of records in memory.
+pub fn load_fastas(files: &Vec<&str>, measure: &str) -> io::Result<Vec<Vec<EncodedFastaRecord>>> {
+    
     let mut widths: Vec<usize> = vec![0; files.len()];
     let mut structs_vec: Vec<Vec<EncodedFastaRecord>> = vec![];
-    let ea = encoding_array();
 
-    for (i, file) in files.into_iter().enumerate()  {
-        let w = align_width(file)
-                    .unwrap();
-        widths.push(w);
-        if i == 1 {
-            if widths[0] != widths[1] {
-                panic!("Files have different widths");
-            }
-        }
+    for (i, file) in files.into_iter().enumerate() {
 
-        let mut efr = EncodedFastaRecord::newknownwidth(w);
         let mut structs: Vec<EncodedFastaRecord> = vec![];
-    
-        let mut nuccounter: usize = 0;
-        let mut l = String::new();
-        let mut first = true;
-    
-        let f = File::open(file)?;
-        let reader = BufReader::new(f);
-    
-        for line in reader.lines() {
-            l = line.unwrap();
-    
-            if first {
-                efr.description = l.strip_prefix('>').unwrap().to_string();
-                efr.id = efr
-                    .description
-                    .split_whitespace()
-                    .collect::<Vec<&str>>()[0]
-                    .to_string();
-                first = false;
-                continue;
-            } else if l.starts_with('>') {
-                nuccounter = 0;
-                
-                structs.push(efr.clone());
-                efr.description = l.strip_prefix('>').unwrap().to_string();
-                efr.id = efr
-                    .description
-                    .split_whitespace()
-                    .collect::<Vec<&str>>()[0]
-                    .to_string();
-                
-                continue;
-            }
-            for nuc in l.bytes() {
-                efr.seq[nuccounter] = ea[nuc as usize];
-                nuccounter += 1;
-            }
-        }
-    
-        structs.push(efr.clone());
 
+        let f = File::open(file).unwrap();
+        let reader = fasta::Reader::new(f);
+
+        let mut first = true;
+
+        for r in reader.records() {
+            
+            let record = r.expect("Error during fasta record parsing");
+            let efr = encode(&record).unwrap();
+
+            if first {
+                widths.push(efr.seq.len());
+                if i == 1 {
+                    if widths[0] != widths[1] {
+                        panic!("Files have different widths");
+                    }
+                }
+                first = false
+            }
+
+            structs.push(efr.clone());
+        }
         structs_vec.push(structs);
     }
 
@@ -205,6 +220,72 @@ pub fn populate_struct_array(files: &Vec<&str>, measure: &str) -> io::Result<Vec
     }
 
     Ok(structs_vec)
+}
+
+// Stream the records in a fasta file by passing them down a channel. Avoids loading the whole file into memory.
+pub fn stream_fasta(file: &str, loaded: &Vec<Vec<EncodedFastaRecord>>, measure: &str, batchsize: usize, channel: Sender<Records>) {
+
+    let mut c = EncodedFastaRecord::new();
+    if measure == "n" {
+       c = consensus(&loaded);
+    }
+
+    let w = loaded[0][0].seq.len();
+
+    let f = File::open(file).unwrap();
+    let reader = fasta::Reader::new(f);
+
+    let mut idx_counter = 0;
+    let mut batch_counter = 0;
+    let mut record_vec: Vec<EncodedFastaRecord> = vec![];
+
+    for r in reader.records() {
+        
+        let record = r.expect("Error during fasta record parsing");
+        if record.seq().len() != w {
+            panic!("streamed alignment is not the same width as loaded alignment")
+        }
+
+        let mut efr = EncodedFastaRecord::new_known_width(w);
+
+        match measure {
+            "n" => {
+                efr = encode_get_differences(&record, &c).unwrap()
+            }
+            "tn93" => {
+                efr = encode_count_bases(&record).unwrap()
+            }
+            _ => efr = encode(&record).unwrap()
+        }
+
+        record_vec.push(efr);
+        batch_counter += 1;
+
+        if batch_counter == batchsize {
+            channel
+                .send(Records{
+                        records: record_vec.clone(), 
+                        idx: idx_counter,
+                    })
+                .unwrap();
+            
+            idx_counter += 1;
+            batch_counter = 0;
+            record_vec.clear();
+        }
+    }
+
+    // send the last batch
+    if record_vec.len() > 0 {
+        channel
+            .send(Records{
+                records: record_vec.clone(), 
+                idx: idx_counter,
+            })
+        .unwrap()
+    }
+
+    drop(channel)
 }
 
 // Calculate the (ATGC) consensus sequence from all the input data held in memory
@@ -256,8 +337,8 @@ pub fn consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaRecord {
         consensus[i] = back_translate[maxidx]
     }
 
-    let mut EFR = EncodedFastaRecord::newknownwidth(w);
-    EFR.seq = consensus;
+    let mut efr = EncodedFastaRecord::new_known_width(w);
+    efr.seq = consensus;
     
-    EFR
+    efr
 }

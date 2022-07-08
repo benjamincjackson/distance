@@ -55,11 +55,17 @@ fn main() -> io::Result<()> {
         .arg(Arg::new("input")
             .short('i')
             .long("input")
-            .help("input alignment(s) in fasta format")
+            .help("Input alignment file(s) in fasta format. Loaded into memory.")
             .takes_value(true)
             .multiple_values(true)
             .max_values(2)
             .required(true))
+        .arg(Arg::new("stream")
+            .short('s')
+            .long("stream")
+            .takes_value(true)
+            .multiple_values(false)
+            .help("Input alignment file in fasta format. Streamed from disk. Requires exactly one file also be specifed to -i."))
         .arg(Arg::new("measure")
             .short('m')
             .long("measure")
@@ -83,8 +89,7 @@ fn main() -> io::Result<()> {
     // One or two input fasta file names
     let inputs: Vec<&str> = m.values_of("input").unwrap().collect();
 
-    // mpmc channels for passing pairs of sequences and their distances between threads
-    let (pairs_sender, pairs_receiver) = bounded(50);
+    // mpmc channel for passing pairs of distances between threads
     let (distances_sender, distances_receiver) = bounded(50);
 
     // We will use this waitgroup to make sure all possible pair-distances are calculated before 
@@ -98,37 +103,20 @@ fn main() -> io::Result<()> {
         .to_owned();
 
     // batch size - to tune the workload per message so that threads aren't fighting over pairs_receiver's lock as often
-    let mut batchsize = m
+    let batchsize = m
         .value_of("batchsize")
         .unwrap()
         .parse::<usize>()
         .unwrap(); 
 
     // The aligned sequence data
-    let efras = populate_struct_array(&inputs, &measure)
-                .unwrap();
+    let efras = load_fastas(&inputs, &measure)
+        .unwrap();
 
     // The sample sizes (for generating the pairs)
     let mut ns = vec![];
     for efra in &efras {
         ns.push(efra.len());
-    }
-
-    // If there is one input file, generate all pairwise comparisons within the alignment,
-    // else there are two input files, so generate all pairwise comparisons between the alignments.
-    // We spin up a thread do to this and move on to the next part of the program
-    if inputs.len() == 1 {
-        thread::spawn({
-            move || {
-                generate_pairs_square(ns[0], batchsize, pairs_sender);
-            }
-        });
-    } else {
-        thread::spawn({
-            move || {
-                generate_pairs_rect(ns[0], ns[1], batchsize, pairs_sender);
-            }
-        });
     }
 
     // The output file name
@@ -140,7 +128,7 @@ fn main() -> io::Result<()> {
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
         move || {
-            gather_write(&output, distances_receiver);
+            gather_write(&output, distances_receiver).unwrap();
         }
     });
 
@@ -155,59 +143,161 @@ fn main() -> io::Result<()> {
         threads = 1;
     }
 
-    // A vector of receiver/sender tuples, cloned to share between each thread in threads.
-    let mut workers = Vec::new();
-    for _i in 0..threads {
-        workers.push((pairs_receiver.clone(), distances_sender.clone()))
-    }
-
-    // Wrap the data in an Arc so that we can share it between threads.
+    // Wrap the loaded data in an Arc so that we can share it between threads.
     let arc = Arc::new(efras);
 
-    // Spin up the threads to do the actual work
-    for worker in workers {
-        let wg_dist = wg_dist.clone();
-        let measure = measure.clone();
-        let arc = arc.clone();
-        thread::spawn(move || {
-            let mut distances: Vec<Distance> = vec![];
-            // for each batch
-            for message in worker.0.iter() {
-                // for each pair in this batch
-                for pair in message.pairs {
-                    // calculate the distance
-                    let d = match measure.as_str() {
-                        "raw" => raw(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "n" => snp2(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "n_high" => snp(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "jc69" => jc69(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "k80" => k80(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "tn93" => tn93(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        // should never get this far because the options are defined in the cli:
-                        _ => panic!("unknown distance measure"),
-                    };
-                    // add the ids and the distance to this batch's temporary vector
-                    distances.push(Distance{
-                        id1: arc[0][pair.seq1_idx].id.clone(),
-                        id2: arc[arc.len()-1][pair.seq2_idx].id.clone(),
-                        dist: d,
-                    });
+    // if a stream is specified, 
+    if m.values_of("stream").is_some() {
+
+        // then the user must specify exactly one input file
+        if inputs.len() != 1 {
+            eprintln!("If you stream one file, you must also provide exactly one other file to -i/--input");
+            std::process::exit(1);
+        }
+        
+        // and then we do streamy stuff...
+                
+        let stream = m
+            .value_of("stream")
+            .unwrap()
+            .to_owned();
+        
+        // an mpmc channel for passing the streamed fasta records between threads
+        let (record_sender, record_receiver) = bounded(50);
+
+        // we spin up a thread to read the streamed input
+        thread::spawn({
+            let measure = measure.clone();
+            let arc = arc.clone();
+            move || {
+                stream_fasta(&stream, &arc, &measure, batchsize, record_sender);
+            }
+        });
+
+        // A vector of receiver/sender tuples, cloned to share between each thread in threads.
+        let mut workers = Vec::new();
+        for _i in 0..threads {
+            workers.push((record_receiver.clone(), distances_sender.clone()))
+        }
+
+        // Spin up the threads that do the distance-calculating
+        for worker in workers {
+            let wg_dist = wg_dist.clone();
+            let measure = measure.clone();
+            let arc = arc.clone();       
+            thread::spawn(move || {
+                let mut distances: Vec<Distance> = vec![];
+                for message in worker.0.iter() {
+                    for target in message.records {
+                        for query in &arc[0] {
+                            let d = match measure.as_str() {
+                                "raw" => raw(query, &target),
+                                "n" => snp2(query, &target),
+                                "n_high" => snp(query, &target),
+                                "jc69" => jc69(query, &target),
+                                "k80" => k80(query, &target),
+                                "tn93" => tn93(query, &target),
+                                // should never get this far because the options are defined in the cli:
+                                _ => panic!("unknown distance measure"),
+                            };
+                            // add the ids and the distance to this batch's temporary vector
+                            distances.push(Distance{
+                                id1: target.id.clone(),
+                                id2: query.id.clone(),
+                                dist: d,
+                            });                        
+                        }
+                    }
+                    // send this batch of distances to the writer
+                    worker.1
+                        .send(Distances{
+                            distances: distances.clone(),
+                            idx: message.idx,
+                            })
+                        .unwrap();
+                    // clear the vector ready for the next batch
+                    distances.clear();
                 }
 
-                // send this batch of distances to the writer
-                worker.1.send(Distances{
-                    distances: distances.clone(),
-                    idx: message.idx,
-                })
-                .unwrap();
+                // when the pair channel is empty (and all distances are calculated) we can drop the cloned distance waitgroup (for this thread)
+                drop(wg_dist);
+            });
+        }
+    } else {
+        // otherwise all the data is in memory, so we can do things a little differently
 
-                // clear the vector ready for the next batch
-                distances.clear();
-            }
+        // an mpmc channel for passing pairs of sequences between threads
+        let (pairs_sender, pairs_receiver) = bounded(50);
 
-            // when the pair channel is empty (and all distances are calculated) we can drop the cloned distance waitgroup (for this thread)
-            drop(wg_dist);
-        });
+        // If there is one input file, generate all pairwise comparisons within the alignment,
+        // else there are two input files, so generate all pairwise comparisons between the alignments.
+        // We spin up a thread do to this and move on to the next part of the program
+        if inputs.len() == 1 {
+            thread::spawn({
+                move || {
+                    generate_pairs_square(ns[0], batchsize, pairs_sender);
+                }
+            });
+        } else {
+            thread::spawn({
+                move || {
+                    generate_pairs_rect(ns[0], ns[1], batchsize, pairs_sender);
+                }
+            });
+        }
+
+        // A vector of receiver/sender tuples, cloned to share between each thread in threads.
+        let mut workers = Vec::new();
+        for _i in 0..threads {
+            workers.push((pairs_receiver.clone(), distances_sender.clone()))
+        }
+
+        // Spin up the threads that do the distance-calculating
+        for worker in workers {
+            let wg_dist = wg_dist.clone();
+            let measure = measure.clone();
+            let arc = arc.clone();
+            thread::spawn(move || {
+                let mut distances: Vec<Distance> = vec![];
+                // for each batch
+                for message in worker.0.iter() {
+                    // for each pair in this batch
+                    for pair in message.pairs {
+                        // calculate the distance
+                        let d = match measure.as_str() {
+                            "raw" => raw(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                            "n" => snp2(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                            "n_high" => snp(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                            "jc69" => jc69(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                            "k80" => k80(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                            "tn93" => tn93(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                            // should never get this far because the options are defined in the cli:
+                            _ => panic!("unknown distance measure"),
+                        };
+                        // add the ids and the distance to this batch's temporary vector
+                        distances.push(Distance{
+                            id1: arc[0][pair.seq1_idx].id.clone(),
+                            id2: arc[arc.len()-1][pair.seq2_idx].id.clone(),
+                            dist: d,
+                        });
+                    }
+
+                    // send this batch of distances to the writer
+                    worker.1
+                        .send(Distances{
+                            distances: distances.clone(),
+                            idx: message.idx,
+                        })
+                    .unwrap();
+
+                    // clear the vector ready for the next batch
+                    distances.clear();
+                }
+
+                // when the pair channel is empty (and all distances are calculated) we can drop the cloned distance waitgroup (for this thread)
+                drop(wg_dist);
+            });
+        }
     }
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
@@ -353,3 +443,4 @@ fn gather_write(filename: &str, rx: Receiver<Distances>) -> io::Result<()> {
 
     Ok(())
 }
+
