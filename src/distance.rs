@@ -181,6 +181,11 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     let w2: f64 = 1.0 - P2 / k2 - Q / (2.0 * g_Y);
     let w3: f64 = 1.0 - Q / (2.0 * g_R * g_Y);
 
-    FloatInt::Float(-k1 * w1.ln() - k2 * w2.ln() - k3 * w3.ln()) // d!
+    let mut d = -k1 * w1.ln() - k2 * w2.ln() - k3 * w3.ln();
+    if d == 0.0 {
+        d = 0.0
+    }
+
+    FloatInt::Float(d)
 }
 
