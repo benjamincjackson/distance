@@ -12,3 +12,4 @@ crossbeam-utils = "0.8.8"
 futures = "0.3"
 async-std = { version = "1.11.0", features = ["attributes"]}
 num-traits = "0.2.15"
+bio = "*"

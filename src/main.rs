@@ -51,7 +51,7 @@ fn main() -> io::Result<()> {
             .long("threads")
             .takes_value(true)
             .default_value("1")
-            .help("how many threads to spin up for pairwise comparisons"))
+            .help("How many threads to spin up for pairwise comparisons"))
         .arg(Arg::new("input")
             .short('i')
             .long("input")
@@ -59,7 +59,7 @@ fn main() -> io::Result<()> {
             .takes_value(true)
             .multiple_values(true)
             .max_values(2)
-            .required(true))
+            .required_unless_present("licenses"))
         .arg(Arg::new("stream")
             .short('s')
             .long("stream")
@@ -72,19 +72,29 @@ fn main() -> io::Result<()> {
             .takes_value(true)
             .default_value("raw")
             .possible_values(["n", "n_high", "raw", "jc69", "k80", "tn93"])
-            .help("which distance measure to use"))
+            .help("Which distance measure to use"))
         .arg(Arg::new("output")
             .short('o')
             .long("output")
             .takes_value(true)
-            .help("output file in tab-separated-value format")
-            .required(true))
+            .help("Output file in tab-separated-value format")
+            .required_unless_present("licenses"))
         .arg(Arg::new("batchsize")
             .long("batchsize")
             .short('b')
             .default_value("1")
-            .help("try setting this >(>) 1 if you are struggling to get a speedup when adding threads"))
+            .help("Try setting this >(>) 1 if you are struggling to get a speedup when adding threads"))
+        .arg(Arg::new("licenses")
+            .long("licenses")
+            .short('l')
+            .takes_value(false)
+            .help("Print licence information"))
         .get_matches();
+
+    if m.is_present("licenses") {
+        println!("{}", licences());
+        std::process::exit(0);
+    }
 
     // One or two input fasta file names
     let inputs: Vec<&str> = m.values_of("input").unwrap().collect();
@@ -444,3 +454,33 @@ fn gather_write(filename: &str, rx: Receiver<Distances>) -> io::Result<()> {
     Ok(())
 }
 
+fn licences() -> String {
+    let licences = "
+Copyright 2022, Ben Jackson
+
+distance is licensed under the GNU LIBRARY GENERAL PUBLIC LICENSE, Version 2
+
+distance incorporates some of Rust-Bio, which is licensed under the MIT licence:
+
+The MIT License (MIT)
+
+Copyright (c) 2016 Johannes Köster, the Rust-Bio team, Google Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and 
+associated documentation files (the \"Software\"), to deal in the Software without restriction, 
+including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, 
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial 
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT 
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES 
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+".to_string();
+
+    licences
+}
