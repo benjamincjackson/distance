@@ -55,7 +55,7 @@ fn main() -> io::Result<()> {
         .arg(Arg::new("input")
             .short('i')
             .long("input")
-            .help("Input alignment file(s) in fasta format. Loaded into memory.")
+            .help("Input alignment file(s) in fasta format. Loaded into memory")
             .takes_value(true)
             .multiple_values(true)
             .max_values(2)
@@ -65,7 +65,7 @@ fn main() -> io::Result<()> {
             .long("stream")
             .takes_value(true)
             .multiple_values(false)
-            .help("Input alignment file in fasta format. Streamed from disk. Requires exactly one file also be specifed to -i."))
+            .help("Input alignment file in fasta format. Streamed from disk. Requires exactly one file also be specifed to -i"))
         .arg(Arg::new("measure")
             .short('m')
             .long("measure")
@@ -88,7 +88,7 @@ fn main() -> io::Result<()> {
             .long("licenses")
             .short('l')
             .takes_value(false)
-            .help("Print licence information"))
+            .help("Print licence information and exit"))
         .get_matches();
 
     if m.is_present("licenses") {
