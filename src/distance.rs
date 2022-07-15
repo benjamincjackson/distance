@@ -32,11 +32,20 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
             d += 1;
         }
     }
+
+    let mut start = 0;
     for idx in target.differences.iter() {
-        // if this site is different from the consensus in seq1 too, we've already tested it, so skip it here
-        if query.differences.binary_search(idx).is_ok() {
+        
+        // if this site is different from the consensus in seq1 too, we've already tested it, so we must skip it here
+        let result = query
+                .differences[start..]
+                .binary_search(idx);
+        if result.is_ok() {
+            start = result.unwrap(); // we can incrementally search a smaller slice of query.distances in future iterations if we find a match. 
             continue
         }
+
+        // otherwise we check for a nucleotide difference
         if (query.seq[*idx] & target.seq[*idx]) < 16 {
             d += 1;
         }
