@@ -25,7 +25,7 @@ pub struct EncodedFastaRecord {
 }
 
 impl EncodedFastaRecord {
-    fn new() -> EncodedFastaRecord {
+    pub fn new() -> EncodedFastaRecord {
         EncodedFastaRecord {
             id: String::new(),
             description: String::new(),
@@ -65,7 +65,7 @@ impl EncodedFastaRecord {
         self.count_G = counting[72];
         self.count_C = counting[40];
     }
-    pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
+    fn get_differences(&mut self, other: &EncodedFastaRecord) {
         self.differences.clear();
         for i in 0..self.seq.len() {
             if (self.seq[i] & other.seq[i]) < 16 {
@@ -162,7 +162,7 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
 }
 
 // Load the records in a list of fasta files into a vector of vector of records in memory.
-pub fn load_fastas(files: &Vec<&str>, measure: &str) -> io::Result<Vec<Vec<EncodedFastaRecord>>> {
+pub fn load_fastas(files: &Vec<String>, measure: &str) -> io::Result<Vec<Vec<EncodedFastaRecord>>> {
     
     let mut widths: Vec<usize> = vec![0; files.len()];
     let mut structs_vec: Vec<Vec<EncodedFastaRecord>> = vec![];
