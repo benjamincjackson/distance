@@ -206,8 +206,10 @@ pub fn stream(setup: Setup) {
 
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
+        let f = File::create(output).unwrap();
+        let mut writer = BufWriter::new(f);
         move || {
-            gather_write(&output, distances_receiver).unwrap();
+            gather_write(writer, distances_receiver).unwrap();
         }
     });
     
@@ -293,8 +295,10 @@ pub fn load(setup: Setup) {
 
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
+        let f = File::create(output).unwrap();
+        let mut writer = BufWriter::new(f);
         move || {
-            gather_write(&output, distances_receiver).unwrap();
+            gather_write(writer, distances_receiver).unwrap();
         }
     });
 
@@ -492,11 +496,9 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
 
 // Write the distances as they arrive. Uses a hashmap whos keys are indices to write the results in the
 // order they are produced by generate_pairs_*()
-fn gather_write(filename: &str, rx: Receiver<Distances>) -> io::Result<()> {
+fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> io::Result<()> {
     
-    let f = File::create(filename)?;
-    let mut buf = BufWriter::new(f);
-    writeln!(buf, "sequence1\tsequence2\tdistance")?;
+    writeln!(writer, "sequence1\tsequence2\tdistance")?;
 
     let mut m: HashMap<usize, Distances> = HashMap::new();
 
@@ -508,13 +510,15 @@ fn gather_write(filename: &str, rx: Receiver<Distances>) -> io::Result<()> {
             let rv = m.remove(&counter).unwrap();
             for result in rv.distances {
                 match result.dist {
-                    FloatInt::Int(d) => writeln!(buf, "{}\t{}\t{}", &result.id1, &result.id2, d)?,
-                    FloatInt::Float(d) => writeln!(buf, "{}\t{}\t{}", &result.id1, &result.id2, d)?,
+                    FloatInt::Int(d) => writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d)?,
+                    FloatInt::Float(d) => writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d)?,
                 }
             }
             counter += 1;            
         }
     }
+
+    writer.flush()?;
 
     Ok(())
 }
