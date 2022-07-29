@@ -16,13 +16,13 @@ mod fastaio;
 use crate::fastaio::*;
 
 // A struct for passing the location of one pairwise comparison down a channel (between threads)
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 struct Pair {
     seq1_idx: usize,
     seq2_idx: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 struct Pairs {
     pairs: Vec<Pair>,
     idx: usize,
@@ -289,7 +289,6 @@ pub fn load(setup: Setup) {
     let ns = setup.ns.to_owned();
     let batchsize = setup.batchsize.to_owned();
     let output = setup.output.to_owned();
-    let stream = setup.stream.to_owned();
     let measure = setup.measure.to_owned();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
@@ -518,4 +517,78 @@ fn gather_write(filename: &str, rx: Receiver<Distances>) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_pairs_square() {
+        let n: usize = 4;
+        let batch_size = 1;
+        let (sx, rx) = bounded(50);
+
+        thread::spawn({
+            let sx = sx.clone();
+            move || {
+                generate_pairs_square(n, batch_size, sx);
+            }
+        });
+
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 1}], idx: 0 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 2}], idx: 1 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 3}], idx: 2 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 2}], idx: 3 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 3}], idx: 4 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 2, seq2_idx: 3}], idx: 5 });
+        assert!(rx.is_empty());
+
+        let batch_size_2 = 4;
+
+        thread::spawn({
+            let sx = sx.clone();
+            move || {
+                generate_pairs_square(n, batch_size_2, sx);
+            }
+        });
+
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 1}, Pair{seq1_idx: 0, seq2_idx: 2}, Pair{seq1_idx: 0, seq2_idx: 3}, Pair{seq1_idx: 1, seq2_idx: 2}], idx: 0 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 3}, Pair{seq1_idx: 2, seq2_idx: 3}], idx: 1 });
+        assert!(rx.is_empty());
+    }
+
+    #[test]
+    fn test_generate_pairs_rect() {
+        let n1: usize = 2;
+        let n2: usize = 2;
+        let batch_size = 1;
+        let (sx, rx) = bounded(50);
+
+        thread::spawn({
+            let sx = sx.clone();
+            move || {
+                generate_pairs_rect(n1, n2, batch_size, sx);
+            }
+        });
+
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 0}], idx: 0 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 1}], idx: 1 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 0}], idx: 2 });
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 1}], idx: 3 });
+        assert!(rx.is_empty());
+
+        let batch_size_2 = 4;
+
+        thread::spawn({
+            let sx = sx.clone();
+            move || {
+                generate_pairs_rect(n1, n2, batch_size_2, sx);
+            }
+        });
+
+        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 0}, Pair{seq1_idx: 0, seq2_idx: 1}, Pair{seq1_idx: 1, seq2_idx: 0}, Pair{seq1_idx: 1, seq2_idx: 1}], idx: 0 });
+        assert!(rx.is_empty());
+    }
 }

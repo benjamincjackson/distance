@@ -1,5 +1,3 @@
-use std::io::BufReader;
-use std::io::BufRead;
 use std::fs::File;
 use std::io;
 use crossbeam_channel::{Sender};
@@ -38,7 +36,7 @@ impl EncodedFastaRecord {
             idx: 0,
         }
     }
-    fn new_known_width(w: usize) -> EncodedFastaRecord {
+    pub fn new_known_width(w: usize) -> EncodedFastaRecord {
         EncodedFastaRecord {
             id: String::new(),
             description: String::new(),
@@ -51,7 +49,7 @@ impl EncodedFastaRecord {
             idx: 0,
         }
     }
-    fn count_bases(&mut self) {
+    pub fn count_bases(&mut self) {
         self.count_A = 0;
         self.count_T = 0;
         self.count_G = 0;
@@ -65,7 +63,7 @@ impl EncodedFastaRecord {
         self.count_G = counting[72];
         self.count_C = counting[40];
     }
-    fn get_differences(&mut self, other: &EncodedFastaRecord) {
+    pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
         self.differences.clear();
         for i in 0..self.seq.len() {
             if (self.seq[i] & other.seq[i]) < 16 {
@@ -81,7 +79,7 @@ pub struct Records {
     pub idx: usize,
 }
 
-fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
+pub fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
     
     let ea  = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
@@ -104,7 +102,7 @@ fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
     Ok(efr)
 }
 
-fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String> {
+pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String> {
     
     let ea  = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
@@ -135,7 +133,7 @@ fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String> {
     Ok(efr)
 }
 
-fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result<EncodedFastaRecord, String> {
+pub fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result<EncodedFastaRecord, String> {
     
     let ea  = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
