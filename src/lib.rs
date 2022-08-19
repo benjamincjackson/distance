@@ -3,7 +3,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use std::collections::HashMap;
 use std::io;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter};
 use std::fs::File;
 use std::sync::Arc;
 use std::thread;
@@ -106,6 +106,7 @@ pub struct Setup {
     wg_dist: WaitGroup,
     efras: Vec<Vec<EncodedFastaRecord>>,
     ns: Vec<usize>,
+    consensus: Option<EncodedFastaRecord>,
 }
 impl Setup {
     fn new() -> Setup {
@@ -120,6 +121,7 @@ impl Setup {
             wg_dist: WaitGroup::new(),
             efras: vec![vec![EncodedFastaRecord::new();0];0],
             ns: Vec::new(),
+            consensus: None,
         }
     }
 }
@@ -142,18 +144,18 @@ pub fn set_up(m: &ArgMatches) -> Setup {
         .to_owned();
     }
 
+    // Which distance measure to use
+    setup.measure = m
+        .value_of("measure")
+        .unwrap()
+        .to_string();
+
     if setup.stream.len() != 0 {
         if setup.inputs.len() != 1 {
             eprintln!("If you stream one file, you must also provide exactly one other file to -i/--input");
             std::process::exit(1);
         }
     }
-
-    // Which distance measure to use
-    setup.measure = m
-        .value_of("measure")
-        .unwrap()
-        .to_string();
 
     // batch size - to tune the workload per message so that threads aren't fighting over pairs_receiver's lock as often
     setup.batchsize = m
@@ -163,8 +165,34 @@ pub fn set_up(m: &ArgMatches) -> Setup {
         .unwrap(); 
 
     // The aligned sequence data
-    setup.efras = load_fastas(&setup.inputs, &setup.measure)
-        .unwrap();
+    for filename in &setup.inputs {
+        let f = File::open(filename).unwrap();
+        setup.efras.push(load_fasta(f).unwrap())
+    }
+
+    // Need to do some extra work depending on which distance measure is used.
+    match setup.measure.as_str() {
+        // For the fast snp-distance, need to calculate the consensus then get the differences from 
+        // it for each record (in each file)
+        "n" => {
+            let consensus = consensus(&setup.efras);
+            for i in 0..setup.efras.len() {
+                for j in 0..setup.efras[i].len() {
+                    setup.efras[i][j].get_differences(&consensus);
+                }
+            }
+            setup.consensus = Some(consensus);
+        }
+        // For Tamura and Nei (1993), need to calculate the base content of each record.
+        "tn93" => {
+            for i in 0..setup.efras.len() {
+                for j in 0..setup.efras[i].len() {
+                    setup.efras[i][j].count_bases();
+                }
+            }
+        }
+        _ => (),
+    }
 
     // The sample sizes (for generating the pairs)
     for efra in &setup.efras {
@@ -201,13 +229,12 @@ pub fn stream(setup: Setup) {
 
     let batchsize = setup.batchsize.to_owned();
     let output = setup.output.to_owned();
-    let stream = setup.stream.to_owned();
     let measure = setup.measure.to_owned();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
         let f = File::create(output).unwrap();
-        let mut writer = BufWriter::new(f);
+        let writer = BufWriter::new(f);
         move || {
             gather_write(writer, distances_receiver).unwrap();
         }
@@ -216,8 +243,9 @@ pub fn stream(setup: Setup) {
     thread::spawn({
         let measure = measure.clone();
         let arc = arc.clone();
+        let f = File::open(setup.stream).unwrap();
         move || {
-            stream_fasta(&stream, &arc, &measure, batchsize, records_sender);
+            stream_fasta(&f, &arc, &measure, setup.consensus, batchsize, records_sender);
         }
     });
 
@@ -296,7 +324,7 @@ pub fn load(setup: Setup) {
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
         let f = File::create(output).unwrap();
-        let mut writer = BufWriter::new(f);
+        let writer = BufWriter::new(f);
         move || {
             gather_write(writer, distances_receiver).unwrap();
         }

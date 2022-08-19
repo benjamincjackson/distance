@@ -79,7 +79,7 @@ pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
         _ => (),
     }
 
-    FloatInt::Float(-0.75 * (1.0 - (4_f64 / 3_f64) * p).ln())
+    FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * p).ln())
 }
 
 // Kimura's (1980) evolutionary distance
@@ -195,30 +195,38 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bio::io::fasta::Record;
+    use bio::io::fasta::{Reader};
     use num_traits::Float;
     use crate::fastaio::*;
 
+    const TARGET_FASTA: &[u8] = b">target
+ATGATGATGATGCCC
+";
+
+    const QUERY_FASTA: &[u8] = b">query
+ATTATTATGATGCCC
+";
+
+    fn setup() -> (EncodedFastaRecord, EncodedFastaRecord) {
+        let target_reader = Reader::new(TARGET_FASTA);
+        let target = encode(&target_reader.records().next().unwrap().unwrap()).unwrap();
+        let query_reader = Reader::new(QUERY_FASTA);
+        let query = encode(&query_reader.records().next().unwrap().unwrap()).unwrap();
+
+        (target, query)
+    }
+
     #[test]
     fn test_snp() {
-        let target_unencoded = Record::with_attrs("target", None, b"ATGATG");
-        let target = encode(&target_unencoded).unwrap();
-
-        let query_unencoded = Record::with_attrs("query", None, b"ATTATT");
-        let query = encode(&query_unencoded).unwrap();
-
+        let (target, query) = setup();
         let result = snp(&target, &query);
         assert_eq!(result, FloatInt::Int(2));
     }
 
     #[test]
     fn test_snp2() {
-        let target_unencoded = Record::with_attrs("target", None, b"ATGATG");
-        let target = encode(&target_unencoded).unwrap();
+        let (target, query) = setup();
 
-        let query_unencoded = Record::with_attrs("query", None, b"ATTATT");
-        let query = encode(&query_unencoded).unwrap();
-        
         let mut v = vec![vec![target, query]];
         let c = consensus(&v);
 
@@ -231,46 +239,26 @@ mod tests {
 
     #[test]
     fn test_raw() {
-        let target_unencoded = Record::with_attrs("target", None, b"ATGATG");
-        let target = encode(&target_unencoded).unwrap();
-
-        let query_unencoded = Record::with_attrs("query", None, b"ATTATT");
-        let query = encode(&query_unencoded).unwrap();
-        
-        let v = vec![vec![target, query]];
-
-        let result = raw(&v[0][0], &v[0][1]);
-        assert_eq!(result, FloatInt::Float(2 as f64 / 6 as f64));
+        let (target, query) = setup();
+        let result = raw(&query, &target);
+        assert_eq!(result, FloatInt::Float(2.0 / 15.0));
     }
 
     #[test]
     fn test_jc69() {
-        let target_unencoded = Record::with_attrs("target", None, b"ATGATG");
-        let target = encode(&target_unencoded).unwrap();
-
-        let query_unencoded = Record::with_attrs("query", None, b"ATTATT");
-        let query = encode(&query_unencoded).unwrap();
-        
-        let v = vec![vec![target, query]];
-
-        let result = jc69(&v[0][0], &v[0][1]);
-        assert_eq!(result, FloatInt::Float(-0.75 * (1.0 - (4_f64 / 3_f64) * (1.0 / 3.0)).ln()));
+        let (target, query) = setup();
+        let result = jc69(&query, &target);
+        assert_eq!(result, FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * (2.0 / 15.0)).ln()));
     }
 
     #[test]
     fn test_k80() {
-        let target_unencoded = Record::with_attrs("target", None, b"ATGATG");
-        let target = encode(&target_unencoded).unwrap();
+        let (target, query) = setup();
 
-        let query_unencoded = Record::with_attrs("query", None, b"ATTATT");
-        let query = encode(&query_unencoded).unwrap();
-        
-        let v = vec![vec![target, query]];
+        let result = k80(&query, &target);
 
-        let result = k80(&v[0][0], &v[0][1]);
-
-        let P = 0.0 / 6.0; // transitions
-        let Q = 2.0 / 6.0; // transversions
+        let P = 0.0 / 15.0; // transitions
+        let Q = 2.0 / 15.0; // transversions
         let desired_result = FloatInt::Float(-0.5 * ((1.0 - 2.0*P - Q) * (1.0 - 2.0*Q).sqrt()).ln());
 
         assert_eq!(result, desired_result);
@@ -278,12 +266,8 @@ mod tests {
 
     #[test]
     fn test_tn93() {
-        let target_unencoded = Record::with_attrs("target", None, b"ATGATGATGATGCCC");
-        let target = encode(&target_unencoded).unwrap();
+        let (target, query) = setup();
 
-        let query_unencoded = Record::with_attrs("query", None, b"ATTATTATGATGCCC");
-        let query = encode(&query_unencoded).unwrap();
-        
         let mut v = vec![vec![target, query]];
 
         v[0][0].count_bases();
