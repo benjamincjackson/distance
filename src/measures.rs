@@ -2,7 +2,7 @@ use crate::fastaio::EncodedFastaRecord;
 
 // We can return this for all the distance-generating functions instead of 
 // switching on whether they return a float or an integer measure
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FloatInt {
     Float(f64),
     Int(i64),
@@ -72,20 +72,14 @@ pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
 
 // Jukes and Cantor's (1969) evolutionary distance
 pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
-    let mut d = 0.0;
-    let mut n = 0.0;
-    for i in 0..target.seq.len() {
-        if query.seq[i] & 8 == 8 && query.seq[i] == target.seq[i] {
-            d += 1.0;
-        } else if query.seq[i] & target.seq[i] < 16 {
-            d += 1.0;
-            n += 1.0;
-        }
+    let temp = raw(query, target);
+    let mut p: f64 = 0.0;
+    match temp {
+        FloatInt::Float(f) => p = f,
+        _ => (),
     }
 
-    let p = n / d;
-
-    FloatInt::Float(-0.75 * (1.0 - (4_f64 / 3_f64) * p).ln())
+    FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * p).ln())
 }
 
 // Kimura's (1980) evolutionary distance
@@ -183,7 +177,7 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     // estimated rates from this pairwise comparison
     let P1: f64 = count_P1 as f64 / count_L as f64; // rate of changes which are transitional differences between purines (A ⇄ G)
     let P2: f64 = count_P2 as f64 / count_L as f64; // rate of changes which are transitional differences between pyramidines (C ⇄ T)
-    let Q: f64 = (count_d - (count_P1 + count_P2)) as f64 / count_L as f64; // rate of changes which are transversional differences  (A ⇄ C || A ⇄ T || C ⇄ A || C ⇄ G) (i.e. everything else)
+    let Q: f64 = (count_d - (count_P1 + count_P2)) as f64 / count_L as f64; // rate of changes which are transversional differences  (A ⇄ C || A ⇄ T || G ⇄ T || C ⇄ G) (i.e. everything else)
 
     // tidies up the equations a bit, after ape
     let w1: f64 = 1.0 - P1 / k1 - Q / (2.0 * g_R);
@@ -198,3 +192,115 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     FloatInt::Float(d)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bio::io::fasta::{Reader};
+    use num_traits::Float;
+    use crate::fastaio::*;
+
+    const TARGET_FASTA: &[u8] = b">target
+ATGATGATGATGCCC
+";
+
+    const QUERY_FASTA: &[u8] = b">query
+ATTATTATGATGCCC
+";
+
+    fn setup() -> (EncodedFastaRecord, EncodedFastaRecord) {
+        let target_reader = Reader::new(TARGET_FASTA);
+        let target = encode(&target_reader.records().next().unwrap().unwrap()).unwrap();
+        let query_reader = Reader::new(QUERY_FASTA);
+        let query = encode(&query_reader.records().next().unwrap().unwrap()).unwrap();
+
+        (target, query)
+    }
+
+    #[test]
+    fn test_snp() {
+        let (target, query) = setup();
+        let result = snp(&target, &query);
+        assert_eq!(result, FloatInt::Int(2));
+    }
+
+    #[test]
+    fn test_snp2() {
+        let (target, query) = setup();
+
+        let mut v = vec![vec![target, query]];
+        let c = consensus(&v);
+
+        v[0][0].get_differences(&c);
+        v[0][1].get_differences(&c);
+
+        let result = snp2(&v[0][0], &v[0][1]);
+        assert_eq!(result, FloatInt::Int(2));
+    }
+
+    #[test]
+    fn test_raw() {
+        let (target, query) = setup();
+        let result = raw(&query, &target);
+        assert_eq!(result, FloatInt::Float(2.0 / 15.0));
+    }
+
+    #[test]
+    fn test_jc69() {
+        let (target, query) = setup();
+        let result = jc69(&query, &target);
+        assert_eq!(result, FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * (2.0 / 15.0)).ln()));
+    }
+
+    #[test]
+    fn test_k80() {
+        let (target, query) = setup();
+
+        let result = k80(&query, &target);
+
+        let P = 0.0 / 15.0; // transitions
+        let Q = 2.0 / 15.0; // transversions
+        let desired_result = FloatInt::Float(-0.5 * ((1.0 - 2.0*P - Q) * (1.0 - 2.0*Q).sqrt()).ln());
+
+        assert_eq!(result, desired_result);
+    }
+
+    #[test]
+    fn test_tn93() {
+        let (target, query) = setup();
+
+        let mut v = vec![vec![target, query]];
+
+        v[0][0].count_bases();
+        v[0][1].count_bases();
+
+        let result = tn93(&v[0][0], &v[0][1]);
+
+        let g_A = 8.0 / 30.0;
+        let g_T = 10.0 / 30.0;
+        let g_C = 6.0 / 30.0;
+        let g_G = 6.0 / 30.0;
+
+        let g_R: f64 = (8.0 + 6.0) / 30.0;
+        let g_Y: f64 = (7.0 + 9.0) / 30.0;
+
+        let k1: f64 = 2.0 * g_A * g_G / g_R;
+        let k2: f64 = 2.0 * g_T * g_C / g_Y;
+        let k3: f64 = 2.0 * (g_R * g_Y - g_A * g_G * g_Y / g_R - g_T * g_C * g_R / g_Y);
+
+        // estimated rates from this pairwise comparison
+        let P1: f64 = 0.0 / 15.0; // rate of changes which are transitional differences between purines (A ⇄ G)
+        let P2: f64 = 0.0 as f64 / 15.0; // rate of changes which are transitional differences between pyramidines (C ⇄ T)
+        let Q: f64 = (2.0 - (0.0 + 0.0)) as f64 / 15.0; // rate of changes which are transversional differences  (A ⇄ C || A ⇄ T || G ⇄ T || C ⇄ G) (i.e. everything else)
+
+        // tidies up the equations a bit, after ape
+        let w1: f64 = 1.0 - P1 / k1 - Q / (2.0 * g_R);
+        let w2: f64 = 1.0 - P2 / k2 - Q / (2.0 * g_Y);
+        let w3: f64 = 1.0 - Q / (2.0 * g_R * g_Y);
+
+        let d = -k1 * w1.ln() - k2 * w2.ln() - k3 * w3.ln();
+        let desired_result = FloatInt::Float(d);
+
+        assert_eq!(result, desired_result);
+
+    }
+}
