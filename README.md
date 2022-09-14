@@ -85,7 +85,6 @@ distance -t 8 -b 1000 -m jc69 -i aligned.fasta -o jc69.tsv
 
 ```
 > distance -h
-
 distance 0.1.0
 
 USAGE:
@@ -96,10 +95,12 @@ OPTIONS:
                                    when adding threads [default: 1]
     -h, --help                     Print help information
     -i, --input <input>...         Input alignment file(s) in fasta format. Loaded into memory
+                                   [default: stdin]
     -l, --licenses                 Print licence information and exit
     -m, --measure <measure>        Which distance measure to use [default: raw] [possible values: n,
                                    n_high, raw, jc69, k80, tn93]
-    -o, --output <output>          Output file in tab-separated-value format
+    -o, --output <output>          Output file in tab-separated-value format. Omit this option to
+                                   print to stdout
     -s, --stream <stream>          Input alignment file in fasta format. Streamed from disk.
                                    Requires exactly one file also be specifed to -i
     -t, --threads <threads>        How many threads to spin up for pairwise comparisons [default: 1]
