@@ -8,7 +8,6 @@ use std::fs::File;
 use std::sync::Arc;
 use std::thread;
 
-
 mod measures;
 use crate::measures::*;
 
@@ -60,7 +59,7 @@ pub fn get_cli_arguments() -> ArgMatches {
             .takes_value(true)
             .multiple_values(true)
             .max_values(2)
-            .required_unless_present("licenses"))
+            .default_value("stdin"))
         .arg(Arg::new("stream")
             .short('s')
             .long("stream")
@@ -78,8 +77,7 @@ pub fn get_cli_arguments() -> ArgMatches {
             .short('o')
             .long("output")
             .takes_value(true)
-            .help("Output file in tab-separated-value format")
-            .required_unless_present("licenses"))
+            .help("Output file in tab-separated-value format. Omit this option to print to stdout"))
         .arg(Arg::new("batchsize")
             .long("batchsize")
             .short('b')
@@ -96,12 +94,11 @@ pub fn get_cli_arguments() -> ArgMatches {
 }
 
 pub struct Setup {
-    inputs: Vec<String>,
-    stream: String,
+    stream: Option<Box<dyn io::Read + Send>>,
     measure: String,
     threads: usize,
     batchsize: usize,
-    output: String,
+    writer: BufWriter<Box<dyn io::Write + Send>>,
     distances_channel: (Sender<Distances>, Receiver<Distances>),
     wg_dist: WaitGroup,
     efras: Vec<Vec<EncodedFastaRecord>>,
@@ -111,13 +108,12 @@ pub struct Setup {
 impl Setup {
     fn new() -> Setup {
         Setup{
-            inputs: Vec::new(),
-            stream: String::new(),
+            stream: None,
             measure: String::new(),
             threads: 1,
             batchsize: 1,
-            output: String::new(),
-            distances_channel: bounded(50),
+            writer: BufWriter::new(Box::new(io::stdout())),
+            distances_channel: bounded(100),
             wg_dist: WaitGroup::new(),
             efras: vec![vec![EncodedFastaRecord::new();0];0],
             ns: Vec::new(),
@@ -130,18 +126,32 @@ pub fn set_up(m: &ArgMatches) -> Setup {
 
     let mut setup = Setup::new();
 
-    // One or two input fasta file names
-    setup.inputs = m
-        .values_of("input")
-        .unwrap()
-        .map(|s| String::from(s))
-        .collect::<Vec<String>>();
+    // One or two input fasta file names (or stdin)
+    let mut inputs: Vec<Box<dyn std::io::Read>> = Vec::new();
+    let raw_inputs: Vec<&str> = m.values_of("input").unwrap().into_iter().collect();
+    for s in &raw_inputs {
+        if s == &"stdin" {
+            inputs.push(Box::new(io::stdin()))
+        } else {
+            inputs.push(Box::new(File::open(s).unwrap()))
+        }
+    }
 
     if m.value_of("stream").is_some() {
-        setup.stream = m
-        .value_of("stream")
-        .unwrap()
-        .to_owned();
+        if inputs.len() != 1 || (inputs.len() == 1 && raw_inputs[0] == "stdin") {
+            eprintln!("If you stream one file from disk, you must also provide exactly one other file to -i/--input");
+            std::process::exit(1);
+        }
+        setup.stream = Some(
+            Box::new(
+                File::open(
+                    m
+                        .value_of("stream")
+                        .unwrap()
+                )
+                .unwrap()
+            )
+        );
     }
 
     // Which distance measure to use
@@ -149,13 +159,6 @@ pub fn set_up(m: &ArgMatches) -> Setup {
         .value_of("measure")
         .unwrap()
         .to_string();
-
-    if setup.stream.len() != 0 {
-        if setup.inputs.len() != 1 {
-            eprintln!("If you stream one file, you must also provide exactly one other file to -i/--input");
-            std::process::exit(1);
-        }
-    }
 
     // batch size - to tune the workload per message so that threads aren't fighting over pairs_receiver's lock as often
     setup.batchsize = m
@@ -165,9 +168,8 @@ pub fn set_up(m: &ArgMatches) -> Setup {
         .unwrap(); 
 
     // The aligned sequence data
-    for filename in &setup.inputs {
-        let f = File::open(filename).unwrap();
-        setup.efras.push(load_fasta(f).unwrap())
+    for file in inputs {
+        setup.efras.push(load_fasta(file).unwrap())
     }
 
     // Need to do some extra work depending on which distance measure is used.
@@ -199,11 +201,9 @@ pub fn set_up(m: &ArgMatches) -> Setup {
         setup.ns.push(efra.len());
     }
 
-    // The output file name
-    setup.output = m
-        .value_of("output")
-        .unwrap()
-        .to_owned();
+    if m.value_of("output").is_some() {
+        setup.writer = BufWriter::new(Box::new(File::create(m.value_of("output").unwrap()).unwrap()))
+    }
 
     // How many additional threads to use for calculating distances - need at least 1.
     setup.threads = m
@@ -224,28 +224,25 @@ pub fn stream(setup: Setup) {
 
     let arc = Arc::new(setup.efras);
     
-    let (records_sender, records_receiver) = bounded(50);
+    let (records_sender, records_receiver) = bounded(100);
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
     let batchsize = setup.batchsize.to_owned();
-    let output = setup.output.to_owned();
     let measure = setup.measure.to_owned();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
-        let f = File::create(output).unwrap();
-        let writer = BufWriter::new(f);
         move || {
-            gather_write(writer, distances_receiver).unwrap();
+            gather_write(setup.writer, distances_receiver).unwrap();
         }
     });
     
     thread::spawn({
         let measure = measure.clone();
         let arc = arc.clone();
-        let f = File::open(setup.stream).unwrap();
+        let s = setup.stream.expect("Stream not specified");
         move || {
-            stream_fasta(&f, &arc, &measure, setup.consensus, batchsize, records_sender);
+            stream_fasta(s, &arc, &measure, setup.consensus, batchsize, records_sender);
         }
     });
 
@@ -294,7 +291,7 @@ pub fn stream(setup: Setup) {
                 distances.clear();
             }
 
-            // when the pair channel is empty (and all distances are calculated) we can drop the cloned distance waitgroup (for this thread)
+            // when the target channel has been dropped (by stream_fasta() after it reaches the end of the file) we can drop the cloned distance waitgroup (for this thread)
             drop(wg_dist);
         });
     }
@@ -305,35 +302,30 @@ pub fn stream(setup: Setup) {
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
     write.join().unwrap();
-
 }
 
 pub fn load(setup: Setup) {
 
     let arc = Arc::new(setup.efras);
 
-    let (pairs_sender, pairs_receiver) = bounded(50);
+    let (pairs_sender, pairs_receiver) = bounded(100);
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
-    let inputs = setup.inputs.to_owned();
     let ns = setup.ns.to_owned();
     let batchsize = setup.batchsize.to_owned();
-    let output = setup.output.to_owned();
     let measure = setup.measure.to_owned();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
-        let f = File::create(output).unwrap();
-        let writer = BufWriter::new(f);
         move || {
-            gather_write(writer, distances_receiver).unwrap();
+            gather_write(setup.writer, distances_receiver).unwrap();
         }
     });
 
     // If there is one input file, generate all pairwise comparisons within the alignment,
     // else there are two input files, so generate all pairwise comparisons between the alignments.
     // We spin up a thread do to this and move on to the next part of the program
-    if inputs.len() == 1 {
+    if ns.len() == 1 {
         thread::spawn({
             move || {
                 generate_pairs_square(ns[0], batchsize, pairs_sender);
@@ -406,14 +398,13 @@ pub fn load(setup: Setup) {
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
     write.join().unwrap();
-
 }
 
 pub fn run(setup: Setup) {
-    if setup.stream.len() > 0 {
-        stream(setup)
+    if setup.stream.is_some() {
+        stream(setup);
     } else {
-        load(setup)
+        load(setup);
     }
 }
 
@@ -522,7 +513,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
     drop(sender);
 }
 
-// Write the distances as they arrive. Uses a hashmap whos keys are indices to write the results in the
+// Write the distances as they arrive. Uses a hashmap whose keys are indices to write the results in the
 // order they are produced by generate_pairs_*()
 fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> io::Result<()> {
     
@@ -554,6 +545,8 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> io::Res
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufReader, BufRead, Read};
+
     use super::*;
 
     #[test]
@@ -623,4 +616,43 @@ mod tests {
         assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 0}, Pair{seq1_idx: 0, seq2_idx: 1}, Pair{seq1_idx: 1, seq2_idx: 0}, Pair{seq1_idx: 1, seq2_idx: 1}], idx: 0 });
         assert!(rx.is_empty());
     }
+
+// const LOAD: &[u8] = b">seq1
+// ATGATG
+// >seq2
+// ATGATT
+// ";
+
+    // #[test]
+    // fn test_load() {
+
+    //     let mut buffer: Vec<u8> = Vec::new();
+
+    //     thread::scope(|s| {
+    //         let j = s.spawn(|| {
+    //             let reader = BufReader::new(io::stdin());
+    //             for b in reader.bytes() {
+    //                 let byte = b.unwrap();
+    //                 buffer.push(byte)
+    //             }
+    //         });
+    //     });
+
+    //     let setup = Setup{
+    //         stream: None,
+    //         measure: "n_high".to_string(),
+    //         threads: 1,
+    //         batchsize: 1,
+    //         writer: BufWriter::new(Box::new(io::stdout())),
+    //         distances_channel: bounded(100),
+    //         wg_dist: WaitGroup::new(),
+    //         efras: vec![load_fasta(LOAD).unwrap()],
+    //         ns: vec![2],
+    //         consensus: None,
+    //     };
+
+    //     load(setup);
+
+    //     // print!("{}", String::from_utf8_lossy(&b));
+    // }
 }

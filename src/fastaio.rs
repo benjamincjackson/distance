@@ -181,7 +181,7 @@ pub fn load_fasta<T: io::Read>(input: T) -> io::Result<Vec<EncodedFastaRecord>> 
             return Err(Error::new(ErrorKind::Other, "Different length sequences in alignment"))
         }
 
-        records.push(efr.clone());
+        records.push(efr);
     }
 
     Ok(records)
