@@ -45,7 +45,7 @@ or all pairwise comparisons between two alignments like:
 
 `distance -i alignment1.fasta alignment2.fasta -o distances2.tsv`
 
-All alignments provided to `-i` (including when you read from `stdin`) are read into memory.
+All alignments provided to `-i` (or when you read from `stdin`) are read into memory.
 
 You can also calculate all pairwise distances between one alignment in memory and one alignment streamed from disk, using the `-s / --stream` flag, like:
 
