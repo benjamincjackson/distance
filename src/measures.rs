@@ -56,18 +56,18 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
 
 // Number of nucleotide differences *per site*
 pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
-    let mut d = 0.0;
-    let mut n = 0.0;
+    let mut d = 0;
+    let mut n = 0;
     for i in 0..target.seq.len() {
         if query.seq[i] & 8 == 8 && query.seq[i] == target.seq[i] {
-            d += 1.0;
+            d += 1;
         } else if query.seq[i] & target.seq[i] < 16 {
-            d += 1.0;
-            n += 1.0;
+            d += 1;
+            n += 1;
         }
     }
 
-    FloatInt::Float(n / d)
+    FloatInt::Float(n as f64 / d as f64)
 }
 
 // Jukes and Cantor's (1969) evolutionary distance
