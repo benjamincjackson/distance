@@ -1,4 +1,4 @@
-use clap::{Command, Arg, ArgMatches};
+use clap::{Command, Arg, ArgMatches, crate_version};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ pub fn get_cli_arguments() -> ArgMatches {
     
     // Define the command-line interface
     let m = Command::new("distance")
-        .version("0.1.1")
+        .version(crate_version!())
         .arg(Arg::new("threads")
             .short('t')
             .long("threads")
