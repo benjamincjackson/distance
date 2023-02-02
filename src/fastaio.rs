@@ -66,7 +66,7 @@ impl EncodedFastaRecord {
     pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
         self.differences.clear();
         for i in 0..self.seq.len() {
-            if (self.seq[i] & other.seq[i]) < 16 {
+            if (self.seq[i] < 240) && (self.seq[i] != other.seq[i]) { // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
                 self.differences.push(i);
             }
         }
@@ -151,7 +151,7 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
             return Err(message)
         }
         efr.seq[i] = ea[*nuc as usize];
-        if (efr.seq[i] & other.seq[i]) < 16 {
+        if (efr.seq[i] < 240) && (efr.seq[i] != other.seq[i]) { // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
             efr.differences.push(i)
         }
     }
