@@ -45,7 +45,7 @@ pub fn get_cli_arguments() -> ArgMatches {
     
     // Define the command-line interface
     let m = Command::new("distance")
-        .version("0.1.0")
+        .version("0.1.1")
         .arg(Arg::new("threads")
             .short('t')
             .long("threads")
