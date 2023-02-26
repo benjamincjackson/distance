@@ -2,8 +2,6 @@
 
 A command-line program to calculate pairwise genetic distances within or between alignments of DNA sequences in fasta format.
 
-This program is a work in progress. It was written primarily as a vehicle for learning Rust.
-
 ## Installation
 
 You will need to [install Rust](https://www.rust-lang.org/tools/install) first.
