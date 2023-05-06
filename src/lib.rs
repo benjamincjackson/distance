@@ -217,7 +217,6 @@ pub fn set_up(m: &ArgMatches) -> Setup {
     }
 
     setup
-
 }
 
 pub fn stream(setup: Setup) {
