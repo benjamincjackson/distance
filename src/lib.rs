@@ -301,7 +301,7 @@ pub fn stream(setup: Setup) -> Result<()> {
         let wg_dist = setup.wg_dist.clone();
         let measure = measure.clone();
         let arc = arc.clone();       
-        let dist_res = thread::spawn(move || -> Result<()> {
+        thread::spawn(move || {
             let mut distances: Vec<Distance> = vec![];
             for message in worker.0.iter() {
                 for target in message.records {
@@ -329,18 +329,14 @@ pub fn stream(setup: Setup) -> Result<()> {
                     .send(Distances{
                         distances: distances.clone(),
                         idx: message.idx,
-                        })?;
+                        }).unwrap();
                 // clear the vector ready for the next batch
                 distances.clear();
             }
 
             // when the target channel has been dropped (by stream_fasta() after it reaches the end of the file) we can drop the cloned distance waitgroup (for this thread)
             drop(wg_dist);
-
-            Ok(())
         });
-
-        dist_res.join().unwrap()?;
     }
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
@@ -405,7 +401,7 @@ pub fn load(setup: Setup) -> Result<()> {
         let wg_dist = setup.wg_dist.clone();
         let measure = measure.clone();
         let arc = arc.clone();
-        let dist_res = thread::spawn(move || -> Result<()> {
+        thread::spawn(move || {
             let mut distances: Vec<Distance> = vec![];
             // for each batch
             for message in worker.0.iter() {
@@ -435,7 +431,7 @@ pub fn load(setup: Setup) -> Result<()> {
                     .send(Distances{
                         distances: distances.clone(),
                         idx: message.idx,
-                    })?;
+                    }).unwrap();
 
                 // clear the vector ready for the next batch
                 distances.clear();
@@ -443,11 +439,7 @@ pub fn load(setup: Setup) -> Result<()> {
 
             // when the pair channel is empty (and all distances are calculated) we can drop the cloned distance waitgroup (for this thread)
             drop(wg_dist);
-
-            Ok(())
         });
-
-        dist_res.join().unwrap()?;
     }
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
