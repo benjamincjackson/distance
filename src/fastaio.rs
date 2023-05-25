@@ -1,8 +1,9 @@
 use std::io;
-use std::io::{Error, ErrorKind};
 use crossbeam_channel::{Sender};
 use bio::io::fasta;
 use bio::io::fasta::{Record};
+
+use crate::{Result, DistanceError};
 
 #[path = "encoding.rs"]
 mod encoding;
@@ -79,7 +80,7 @@ pub struct Records {
     pub idx: usize,
 }
 
-pub fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
+pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
     
     let ea  = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
@@ -94,7 +95,7 @@ pub fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
         if ea[*nuc as usize] == 0 {
             let mut message = "invalid nucleotide character in record: ".to_string();
             message.push(*nuc as char);
-            return Err(message)
+            return Err(DistanceError::Message(message))
         }
         efr.seq[i] = ea[*nuc as usize]
     }
@@ -102,7 +103,7 @@ pub fn encode(record: &Record) -> Result<EncodedFastaRecord, String> {
     Ok(efr)
 }
 
-pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String> {
+pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
     
     let ea  = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
@@ -119,7 +120,7 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String>
         if ea[*nuc as usize] == 0 {
             let mut message = "invalid nucleotide character in record: ".to_string();
             message.push(*nuc as char);
-            return Err(message)
+            return Err(DistanceError::Message(message))
         }
         efr.seq[i] = ea[*nuc as usize];
         counting[*nuc as usize] += 1;
@@ -133,7 +134,7 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord, String>
     Ok(efr)
 }
 
-fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result<EncodedFastaRecord, String> {
+fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result<EncodedFastaRecord> {
     
     let ea  = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
@@ -148,7 +149,7 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
         if ea[*nuc as usize] == 0 {
             let mut message = "invalid nucleotide character in record: ".to_string();
             message.push(*nuc as char);
-            return Err(message)
+            return Err(DistanceError::Message(message))
         }
         efr.seq[i] = ea[*nuc as usize];
         if (efr.seq[i] < 240) && (efr.seq[i] != other.seq[i]) { // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
@@ -160,25 +161,23 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
 }
 
 // Load the records in a list of fasta files into a vector of records in memory.
-pub fn load_fasta<T: io::Read>(input: T) -> io::Result<Vec<EncodedFastaRecord>> {
+pub fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
     
     let mut width: usize = 0;
     let mut records: Vec<EncodedFastaRecord> = vec![];
+    let mut first = true;
 
     let reader = fasta::Reader::new(input);
 
-    let mut first = true;
-
     for r in reader.records() {
-        
-        let record = r.expect("Error during fasta record parsing");
-        let efr = encode(&record).unwrap();
+        let record = r?;
+        let efr = encode(&record)?;
 
         if first {
             width = efr.seq.len();
             first = false;
         } else if efr.seq.len() != width {
-            return Err(Error::new(ErrorKind::Other, "Different length sequences in alignment"))
+            return Err(DistanceError::Message("Different length sequences in alignment".to_string()))
         }
 
         records.push(efr);
@@ -188,7 +187,7 @@ pub fn load_fasta<T: io::Read>(input: T) -> io::Result<Vec<EncodedFastaRecord>> 
 }
 
 // Stream the records in a fasta file by passing them down a channel. Avoids loading the whole file into memory.
-pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>>, measure: &str, consen: Option<EncodedFastaRecord>, batchsize: usize, channel: Sender<Records>) {
+pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>>, measure: &str, consen: Option<EncodedFastaRecord>, batchsize: usize, channel: Sender<Records>) -> Result<()> {
 
     let w = loaded[0][0].seq.len();
 
@@ -201,28 +200,27 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
     let mut consensus = EncodedFastaRecord::new_known_width(w);
     match measure {
         "n" => {
-            consensus = consen.unwrap()
+            match consen {
+                None => return Err(DistanceError::Message("Expected a consensus sequence to be generated with the distance measures is n".to_string())),
+                Some(EFR) => consensus = EFR,
+            }
         }
-        _ => ()
+        _ => (),
     }
 
     for r in reader.records() {
-        
-        let record = r.expect("Error during fasta record parsing");
+        let record = r?;
+
         if record.seq().len() != w {
-            panic!("streamed alignment is not the same width as loaded alignment")
+            return Err(DistanceError::Message("streamed alignment is not the same width as loaded alignment".to_string()))
         }
 
         let mut efr = EncodedFastaRecord::new_known_width(w);
 
         match measure {
-            "tn93" => {
-                efr = encode_count_bases(&record).unwrap()
-            }
-            "n" => {
-                efr = encode_get_differences(&record, &consensus).unwrap()
-            }
-            _ => efr = encode(&record).unwrap()
+            "tn93" => efr = encode_count_bases(&record)?,
+            "n" => efr = encode_get_differences(&record, &consensus)?,
+            _ => efr = encode(&record)?,
         }
 
         record_vec.push(efr);
@@ -233,9 +231,8 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
                 .send(Records{
                         records: record_vec.clone(), 
                         idx: idx_counter,
-                    })
-                .unwrap();
-            
+                    })?;
+
             idx_counter += 1;
             batch_counter = 0;
             record_vec.clear();
@@ -248,11 +245,12 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
             .send(Records{
                 records: record_vec.clone(), 
                 idx: idx_counter,
-            })
-        .unwrap()
+            })?;
     }
 
-    drop(channel)
+    drop(channel);
+
+    Ok(())
 }
 
 // Calculate the (ATGC) consensus sequence from all the input data held in memory

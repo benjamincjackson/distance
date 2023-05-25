@@ -1,3 +1,4 @@
+use async_std::task::JoinHandle;
 use clap::{Command, Arg, ArgMatches, crate_version};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
@@ -5,14 +6,48 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{BufWriter};
 use std::fs::File;
+use std::num::ParseIntError;
 use std::sync::Arc;
 use std::thread;
 
 mod measures;
 use crate::measures::*;
-
 mod fastaio;
 use crate::fastaio::*;
+
+
+type Result<T> = std::result::Result<T, DistanceError>;
+
+#[derive(Debug)]
+pub enum DistanceError {
+    IOError(io::Error),
+    ParseIntError(ParseIntError),
+    ChanSendFastaErr(crossbeam_channel::SendError<fastaio::Records>),
+    ChanSendDistErr(crossbeam_channel::SendError<Distances>),
+    ChanRecvErr(crossbeam_channel::RecvError),
+    Message(String),
+}
+impl From<io::Error> for DistanceError {
+    fn from(err: io::Error) -> Self {
+        DistanceError::IOError(err)
+    }
+}
+impl From<crossbeam_channel::SendError<fastaio::Records>> for DistanceError {
+    fn from(err: crossbeam_channel::SendError<fastaio::Records>) -> Self {
+        DistanceError::ChanSendFastaErr(err)
+    }
+}
+impl From<crossbeam_channel::SendError<Distances>> for DistanceError {
+    fn from(err: crossbeam_channel::SendError<Distances>) -> Self {
+        DistanceError::ChanSendDistErr(err)
+    }
+}
+impl From<ParseIntError> for DistanceError {
+    fn from(err: ParseIntError) -> Self {
+        DistanceError::ParseIntError(err)
+    }
+}
+
 
 // A struct for passing the location of one pairwise comparison down a channel (between threads)
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +57,7 @@ struct Pair {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Pairs {
+pub struct Pairs {
     pairs: Vec<Pair>,
     idx: usize,
 }
@@ -36,7 +71,7 @@ struct Distance {
 }
 
 #[derive(Clone)]
-struct Distances {
+pub struct Distances {
     distances: Vec<Distance>,
     idx: usize,
 }
@@ -122,7 +157,7 @@ impl Setup {
     }
 }
 
-pub fn set_up(m: &ArgMatches) -> Setup {
+pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     let mut setup = Setup::new();
 
@@ -139,17 +174,14 @@ pub fn set_up(m: &ArgMatches) -> Setup {
 
     if m.value_of("stream").is_some() {
         if inputs.len() != 1 || (inputs.len() == 1 && raw_inputs[0] == "stdin") {
-            eprintln!("If you stream one file from disk, you must also provide exactly one other file to -i/--input");
-            std::process::exit(1);
+            return Err(DistanceError::Message("If you stream one file from disk, you must also provide exactly one other file to -i/--input".to_string()));
         }
+        let path = m
+            .value_of("stream")
+            .unwrap();
         setup.stream = Some(
             Box::new(
-                File::open(
-                    m
-                        .value_of("stream")
-                        .unwrap()
-                )
-                .unwrap()
+                File::open(path)?
             )
         );
     }
@@ -164,12 +196,11 @@ pub fn set_up(m: &ArgMatches) -> Setup {
     setup.batchsize = m
         .value_of("batchsize")
         .unwrap()
-        .parse::<usize>()
-        .unwrap(); 
+        .parse::<usize>()?; 
 
     // The aligned sequence data
     for file in inputs {
-        setup.efras.push(load_fasta(file).unwrap())
+        setup.efras.push(load_fasta(file)?)
     }
 
     // Need to do some extra work depending on which distance measure is used.
@@ -202,24 +233,30 @@ pub fn set_up(m: &ArgMatches) -> Setup {
     }
 
     if m.value_of("output").is_some() {
-        setup.writer = BufWriter::new(Box::new(File::create(m.value_of("output").unwrap()).unwrap()))
+        setup.writer = BufWriter::new(
+            Box::new(
+                File::create(
+                    m.value_of("output")
+                        .unwrap()
+                )?
+            )
+        )
     }
 
     // How many additional threads to use for calculating distances - need at least 1.
     setup.threads = m
         .value_of("threads")
         .unwrap()
-        .parse::<usize>()
-        .unwrap();
+        .parse::<usize>()?;
 
     if setup.threads < 1 {
         setup.threads = 1;
     }
 
-    setup
+    Ok(setup)
 }
 
-pub fn stream(setup: Setup) {
+pub fn stream(setup: Setup) -> Result<()> {
 
     let arc = Arc::new(setup.efras);
     
@@ -232,16 +269,24 @@ pub fn stream(setup: Setup) {
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
         move || {
-            gather_write(setup.writer, distances_receiver).unwrap();
+            let result = gather_write(setup.writer, distances_receiver);
+            match result {
+                Err(e) => return Err(e),
+                Ok(_) => Ok(()), 
+            }
         }
     });
     
-    thread::spawn({
+    let stream = thread::spawn({
         let measure = measure.clone();
         let arc = arc.clone();
         let s = setup.stream.expect("Stream not specified");
         move || {
-            stream_fasta(s, &arc, &measure, setup.consensus, batchsize, records_sender);
+            let r = stream_fasta(s, &arc, &measure, setup.consensus, batchsize, records_sender);
+            match r {
+                Err(e) => Err(e),
+                Ok(_) => Ok(()),
+            }
         }
     });
 
@@ -256,7 +301,7 @@ pub fn stream(setup: Setup) {
         let wg_dist = setup.wg_dist.clone();
         let measure = measure.clone();
         let arc = arc.clone();       
-        thread::spawn(move || {
+        let dist_res = thread::spawn(move || -> Result<()> {
             let mut distances: Vec<Distance> = vec![];
             for message in worker.0.iter() {
                 for target in message.records {
@@ -284,26 +329,33 @@ pub fn stream(setup: Setup) {
                     .send(Distances{
                         distances: distances.clone(),
                         idx: message.idx,
-                        })
-                    .unwrap();
+                        })?;
                 // clear the vector ready for the next batch
                 distances.clear();
             }
 
             // when the target channel has been dropped (by stream_fasta() after it reaches the end of the file) we can drop the cloned distance waitgroup (for this thread)
             drop(wg_dist);
+
+            Ok(())
         });
+
+        dist_res.join().unwrap()?;
     }
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
     setup.wg_dist.wait();
+    stream.join().unwrap()?;
+
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write.join().unwrap();
+    write.join().unwrap()?;
+
+    Ok(())
 }
 
-pub fn load(setup: Setup) {
+pub fn load(setup: Setup) -> Result<()> {
 
     let arc = Arc::new(setup.efras);
 
@@ -317,7 +369,11 @@ pub fn load(setup: Setup) {
     // We spin up a thread to write the output as it arrives down the distance channel.
     let write = thread::spawn({
         move || {
-            gather_write(setup.writer, distances_receiver).unwrap();
+            let write_res = gather_write(setup.writer, distances_receiver);
+            match write_res {
+                Err(e) => return Err(e),
+                Ok(_) => return Ok(()),
+            }
         }
     });
 
@@ -331,7 +387,7 @@ pub fn load(setup: Setup) {
             }
         });
     } else {
-        thread::spawn({
+         thread::spawn({
             move || {
                 generate_pairs_rect(ns[0], ns[1], batchsize, pairs_sender);
             }
@@ -349,7 +405,7 @@ pub fn load(setup: Setup) {
         let wg_dist = setup.wg_dist.clone();
         let measure = measure.clone();
         let arc = arc.clone();
-        thread::spawn(move || {
+        let dist_res = thread::spawn(move || -> Result<()> {
             let mut distances: Vec<Distance> = vec![];
             // for each batch
             for message in worker.0.iter() {
@@ -379,8 +435,7 @@ pub fn load(setup: Setup) {
                     .send(Distances{
                         distances: distances.clone(),
                         idx: message.idx,
-                    })
-                .unwrap();
+                    })?;
 
                 // clear the vector ready for the next batch
                 distances.clear();
@@ -388,7 +443,11 @@ pub fn load(setup: Setup) {
 
             // when the pair channel is empty (and all distances are calculated) we can drop the cloned distance waitgroup (for this thread)
             drop(wg_dist);
+
+            Ok(())
         });
+
+        dist_res.join().unwrap()?;
     }
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
@@ -396,15 +455,18 @@ pub fn load(setup: Setup) {
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write.join().unwrap();
+    write.join().unwrap()?;
+
+    Ok(())
 }
 
-pub fn run(setup: Setup) {
+pub fn run(setup: Setup) -> Result<()> {
     if setup.stream.is_some() {
-        stream(setup);
+        let _ = stream(setup)?;
     } else {
-        load(setup);
+        let _ = load(setup)?;
     }
+    Ok(())
 }
 
 // Given the sample size of a single alignment, generate all possible pairwise comparisons
@@ -437,8 +499,7 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) {
                     .send( Pairs {
                         pairs: pair_vec.clone(),
                         idx: idx_counter,
-                    })
-                    .unwrap();
+                    }).unwrap();
 
                 size_counter = 0;
                 idx_counter += 1;
@@ -453,8 +514,7 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) {
             .send( Pairs {
                 pairs: pair_vec.clone(),
                 idx: idx_counter,
-            })
-        .unwrap();
+            }).unwrap();
     }
     
     drop(sender);
@@ -489,8 +549,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
                     .send( Pairs {
                         pairs: pair_vec.clone(),
                         idx: idx_counter,
-                    })
-                    .unwrap();
+                    }).unwrap();
 
                 size_counter = 0;
                 idx_counter += 1;
@@ -505,8 +564,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
             .send( Pairs {
                 pairs: pair_vec.clone(),
                 idx: idx_counter,
-            })
-        .unwrap();
+            }).unwrap();
     }
 
     drop(sender);

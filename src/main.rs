@@ -9,9 +9,9 @@ fn main() {
         std::process::exit(0);
     }
 
-    let setup = set_up(&m);
+    let setup = set_up(&m).unwrap();
 
-    run(setup);
+    run(setup).unwrap();
 }
 
 fn licences() -> String {
