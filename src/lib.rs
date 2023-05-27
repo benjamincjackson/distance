@@ -563,7 +563,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
 
 // Write the distances as they arrive. Uses a hashmap whose keys are indices to write the results in the
 // order they are produced by generate_pairs_*()
-fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> io::Result<()> {
+fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<()> {
     
     writeln!(writer, "sequence1\tsequence2\tdistance")?;
 
