@@ -80,6 +80,16 @@ pub struct Records {
     pub idx: usize,
 }
 
+fn err_message_invalid_nuc(c:char) -> String {
+    let mut message = "Invalid nucleotide character in record: ".to_string();
+    message.push(c);
+    message
+}
+
+pub fn err_message_different_length_seqs() -> String {
+    "Different length sequences in alignment(s)".to_string()
+}
+
 pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
     
     let ea  = encoding_array();
@@ -93,8 +103,7 @@ pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
     
     for (i, nuc) in record.seq().iter().enumerate() {
         if ea[*nuc as usize] == 0 {
-            let mut message = "invalid nucleotide character in record: ".to_string();
-            message.push(*nuc as char);
+            let message = err_message_invalid_nuc(*nuc as char);
             return Err(DistanceError::Message(message))
         }
         efr.seq[i] = ea[*nuc as usize]
@@ -118,8 +127,7 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
     
     for (i, nuc) in record.seq().iter().enumerate() {
         if ea[*nuc as usize] == 0 {
-            let mut message = "invalid nucleotide character in record: ".to_string();
-            message.push(*nuc as char);
+            let message = err_message_invalid_nuc(*nuc as char);
             return Err(DistanceError::Message(message))
         }
         efr.seq[i] = ea[*nuc as usize];
@@ -147,8 +155,7 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
     
     for (i, nuc) in record.seq().iter().enumerate() {
         if ea[*nuc as usize] == 0 {
-            let mut message = "invalid nucleotide character in record: ".to_string();
-            message.push(*nuc as char);
+            let message = err_message_invalid_nuc(*nuc as char);
             return Err(DistanceError::Message(message))
         }
         efr.seq[i] = ea[*nuc as usize];
@@ -161,7 +168,7 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
 }
 
 // Load the records in a list of fasta files into a vector of records in memory.
-pub fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
+fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
     
     let mut width: usize = 0;
     let mut records: Vec<EncodedFastaRecord> = vec![];
@@ -177,13 +184,29 @@ pub fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
             width = efr.seq.len();
             first = false;
         } else if efr.seq.len() != width {
-            return Err(DistanceError::Message("Different length sequences in alignment".to_string()))
+            return Err(DistanceError::Message(err_message_different_length_seqs()))
         }
 
         records.push(efr);
     }
 
     Ok(records)
+}
+
+pub fn load_fastas<T: io::Read>(inputs: Vec<T>) -> Result<Vec<Vec<EncodedFastaRecord>>> {
+    let mut loaded = vec![];
+    let mut counter = 0;
+    for file in inputs {
+        loaded.push(
+            load_fasta(file)?
+        );
+        if counter == 1 && loaded[0][0].seq.len() != loaded[1][0].seq.len() {
+            return Err(DistanceError::Message(err_message_different_length_seqs()))
+        }
+        counter += 1;
+    };
+
+    Ok(loaded)
 }
 
 // Stream the records in a fasta file by passing them down a channel. Avoids loading the whole file into memory.
@@ -212,7 +235,7 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
         let record = r?;
 
         if record.seq().len() != w {
-            return Err(DistanceError::Message("streamed alignment is not the same width as loaded alignment".to_string()))
+            return Err(DistanceError::Message(err_message_different_length_seqs()))
         }
 
         let mut efr = EncodedFastaRecord::new_known_width(w);

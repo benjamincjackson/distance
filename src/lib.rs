@@ -1,4 +1,3 @@
-use async_std::task::JoinHandle;
 use clap::{Command, Arg, ArgMatches, crate_version};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
@@ -166,9 +165,13 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     let raw_inputs: Vec<&str> = m.values_of("input").unwrap().into_iter().collect();
     for s in &raw_inputs {
         if s == &"stdin" {
-            inputs.push(Box::new(io::stdin()))
+            inputs.push(Box::new(
+                io::stdin()
+            ))
         } else {
-            inputs.push(Box::new(File::open(s).unwrap()))
+            inputs.push(Box::new(
+                File::open(s)?
+            ))
         }
     }
 
@@ -199,9 +202,7 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         .parse::<usize>()?; 
 
     // The aligned sequence data
-    for file in inputs {
-        setup.efras.push(load_fasta(file)?)
-    }
+    setup.efras = load_fastas(inputs)?;
 
     // Need to do some extra work depending on which distance measure is used.
     match setup.measure.as_str() {
@@ -236,8 +237,7 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         setup.writer = BufWriter::new(
             Box::new(
                 File::create(
-                    m.value_of("output")
-                        .unwrap()
+                    m.value_of("output").unwrap()
                 )?
             )
         )
@@ -314,7 +314,7 @@ pub fn stream(setup: Setup) -> Result<()> {
                             "k80" => k80(query, &target),
                             "tn93" => tn93(query, &target),
                             // should never get this far because the options are defined in the cli:
-                            _ => panic!("unknown distance measure"),
+                            _ => panic!("Unknown distance measure"),
                         };
                         // add the ids and the distance to this batch's temporary vector
                         distances.push(Distance{
@@ -342,7 +342,6 @@ pub fn stream(setup: Setup) -> Result<()> {
     // When all the distances have been calculated, we can drop the sending end of the distance channel
     setup.wg_dist.wait();
     stream.join().unwrap()?;
-
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
@@ -416,7 +415,7 @@ pub fn load(setup: Setup) -> Result<()> {
                         "k80" => k80(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
                         "tn93" => tn93(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
                         // should never get this far because the options are defined in the cli:
-                        _ => panic!("unknown distance measure"),
+                        _ => panic!("Unknown distance measure"),
                     };
                     // add the ids and the distance to this batch's temporary vector
                     distances.push(Distance{
@@ -594,8 +593,6 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> io::Res
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, BufRead, Read};
-
     use super::*;
 
     #[test]
