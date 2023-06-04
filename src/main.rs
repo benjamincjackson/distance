@@ -1,7 +1,6 @@
 use distance::*;
 
-fn main() {
-
+fn main() -> Result<(), DistanceError> {
     let m = get_cli_arguments();
 
     if m.is_present("licenses") {
@@ -9,9 +8,14 @@ fn main() {
         std::process::exit(0);
     }
 
-    let setup = set_up(&m);
+    let setup = set_up(&m)?;
 
-    run(setup);
+    let _ = match run(setup) {
+        Ok(_) => (),
+        Err(e) => return Err(e),
+    };
+
+    Ok(())
 }
 
 fn licences() -> String {

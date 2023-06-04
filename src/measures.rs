@@ -1,6 +1,6 @@
 use crate::fastaio::EncodedFastaRecord;
 
-// We can return this for all the distance-generating functions instead of 
+// We can return this for all the distance-generating functions instead of
 // switching on whether they return a float or an integer measure
 #[derive(Clone, Debug, PartialEq)]
 pub enum FloatInt {
@@ -35,14 +35,11 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
 
     let mut start = 0;
     for idx in target.differences.iter() {
-        
         // if this site is different from the consensus in seq1 too, we've already tested it, so we must skip it here
-        let result = query
-                .differences[start..]
-                .binary_search(idx);
+        let result = query.differences[start..].binary_search(idx);
         if result.is_ok() {
-            start = result.unwrap(); // we can incrementally search a smaller slice of query.distances in future iterations if we find a match. 
-            continue
+            start = result.unwrap(); // we can incrementally search a smaller slice of query.distances in future iterations if we find a match.
+            continue;
         }
 
         // otherwise we check for a nucleotide difference
@@ -50,7 +47,7 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
             d += 1;
         }
     }
-    
+
     FloatInt::Int(d)
 }
 
@@ -89,18 +86,24 @@ pub fn k80(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
     let mut tv: usize = 0;
 
     for i in 0..target.seq.len() {
-        if (query.seq[i] & 8) == 8 && query.seq[i] == target.seq[i] { // are the bases certainly the same
+        if (query.seq[i] & 8) == 8 && query.seq[i] == target.seq[i] {
+            // are the bases certainly the same
             count_L += 1;
-        } else if (query.seq[i] & target.seq[i]) < 16 { // they are certainly different
-            if (query.seq[i] & 55) == 0 && (target.seq[i] & 55) == 0 { // both are purines, this is a transition
+        } else if (query.seq[i] & target.seq[i]) < 16 {
+            // they are certainly different
+            if (query.seq[i] & 55) == 0 && (target.seq[i] & 55) == 0 {
+                // both are purines, this is a transition
                 ts += 1;
                 count_L += 1;
-            } else if (query.seq[i] & 199) == 0 && (target.seq[i] & 199) == 0 { // both are pyramidines, this is a transition
+            } else if (query.seq[i] & 199) == 0 && (target.seq[i] & 199) == 0 {
+                // both are pyramidines, this is a transition
                 ts += 1;
                 count_L += 1;
-            } else if ((query.seq[i] & 55) == 0 && (target.seq[i] & 199) == 0) 
-                      || ((query.seq[i] & 199) == 0 && (target.seq[i] & 55) == 0) { // one of each, this is a transversion
-                tv += 1; 
+            } else if ((query.seq[i] & 55) == 0 && (target.seq[i] & 199) == 0)
+                || ((query.seq[i] & 199) == 0 && (target.seq[i] & 55) == 0)
+            {
+                // one of each, this is a transversion
+                tv += 1;
                 count_L += 1;
             }
         }
@@ -108,8 +111,8 @@ pub fn k80(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
 
     let P = ts as f64 / count_L as f64;
     let Q = tv as f64 / count_L as f64;
-    
-    FloatInt::Float(-0.5 * ((1.0 - 2.0*P - Q) * (1.0 - 2.0*Q).sqrt()).ln())
+
+    FloatInt::Float(-0.5 * ((1.0 - 2.0 * P - Q) * (1.0 - 2.0 * Q).sqrt()).ln())
 }
 
 // Tamura and Nei's (1993) evolutionary distance
@@ -195,9 +198,9 @@ pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bio::io::fasta::{Reader};
-    use num_traits::Float;
     use crate::fastaio::*;
+    use bio::io::fasta::Reader;
+    use num_traits::Float;
 
     const TARGET_FASTA: &[u8] = b">target
 ATGATGATGATGCCC
@@ -248,7 +251,10 @@ ATTATTATGATGCCC
     fn test_jc69() {
         let (target, query) = setup();
         let result = jc69(&query, &target);
-        assert_eq!(result, FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * (2.0 / 15.0)).ln()));
+        assert_eq!(
+            result,
+            FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * (2.0 / 15.0)).ln())
+        );
     }
 
     #[test]
@@ -259,7 +265,8 @@ ATTATTATGATGCCC
 
         let P = 0.0 / 15.0; // transitions
         let Q = 2.0 / 15.0; // transversions
-        let desired_result = FloatInt::Float(-0.5 * ((1.0 - 2.0*P - Q) * (1.0 - 2.0*Q).sqrt()).ln());
+        let desired_result =
+            FloatInt::Float(-0.5 * ((1.0 - 2.0 * P - Q) * (1.0 - 2.0 * Q).sqrt()).ln());
 
         assert_eq!(result, desired_result);
     }
@@ -301,6 +308,5 @@ ATTATTATGATGCCC
         let desired_result = FloatInt::Float(d);
 
         assert_eq!(result, desired_result);
-
     }
 }
