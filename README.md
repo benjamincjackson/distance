@@ -83,7 +83,7 @@ distance -t 8 -b 1000 -m jc69 -i aligned.fasta -o jc69.tsv
 
 ```
 > distance -h
-distance 0.1.0
+distance 0.1.2
 
 USAGE:
     distance [OPTIONS]
