@@ -1,16 +1,16 @@
-use std::io;
-use crossbeam_channel::{Sender};
 use bio::io::fasta;
-use bio::io::fasta::{Record};
+use bio::io::fasta::Record;
+use crossbeam_channel::Sender;
+use std::io;
 
-use crate::{Result, DistanceError};
+use crate::{DistanceError, Result};
 
 #[path = "encoding.rs"]
 mod encoding;
 use encoding::*;
 
 // One encoded fasta record.
-#[derive(Clone, Debug,  PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EncodedFastaRecord {
     pub id: String,
     pub description: String,
@@ -67,7 +67,8 @@ impl EncodedFastaRecord {
     pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
         self.differences.clear();
         for i in 0..self.seq.len() {
-            if (self.seq[i] < 240) && (self.seq[i] != other.seq[i]) { // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
+            if (self.seq[i] < 240) && (self.seq[i] != other.seq[i]) {
+                // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
                 self.differences.push(i);
             }
         }
@@ -80,7 +81,7 @@ pub struct Records {
     pub idx: usize,
 }
 
-fn err_message_invalid_nuc(c:char) -> String {
+fn err_message_invalid_nuc(c: char) -> String {
     let mut message = "Invalid nucleotide character in record: ".to_string();
     message.push(c);
     message
@@ -91,8 +92,7 @@ pub fn err_message_different_length_seqs() -> String {
 }
 
 pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
-    
-    let ea  = encoding_array();
+    let ea = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
 
     efr.id = record.id().to_string();
@@ -100,11 +100,11 @@ pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
         Some(desc) => efr.description = desc.to_string(),
         None => (),
     }
-    
+
     for (i, nuc) in record.seq().iter().enumerate() {
         if ea[*nuc as usize] == 0 {
             let message = err_message_invalid_nuc(*nuc as char);
-            return Err(DistanceError::Message(message))
+            return Err(DistanceError::Message(message));
         }
         efr.seq[i] = ea[*nuc as usize]
     }
@@ -113,8 +113,7 @@ pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
 }
 
 pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
-    
-    let ea  = encoding_array();
+    let ea = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
 
     let mut counting = [0; 256];
@@ -124,11 +123,11 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
         Some(desc) => efr.description = desc.to_string(),
         None => (),
     }
-    
+
     for (i, nuc) in record.seq().iter().enumerate() {
         if ea[*nuc as usize] == 0 {
             let message = err_message_invalid_nuc(*nuc as char);
-            return Err(DistanceError::Message(message))
+            return Err(DistanceError::Message(message));
         }
         efr.seq[i] = ea[*nuc as usize];
         counting[*nuc as usize] += 1;
@@ -142,9 +141,11 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
     Ok(efr)
 }
 
-fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result<EncodedFastaRecord> {
-    
-    let ea  = encoding_array();
+fn encode_get_differences(
+    record: &Record,
+    other: &EncodedFastaRecord,
+) -> Result<EncodedFastaRecord> {
+    let ea = encoding_array();
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
 
     efr.id = record.id().to_string();
@@ -152,14 +153,15 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
         Some(desc) => efr.description = desc.to_string(),
         None => (),
     }
-    
+
     for (i, nuc) in record.seq().iter().enumerate() {
         if ea[*nuc as usize] == 0 {
             let message = err_message_invalid_nuc(*nuc as char);
-            return Err(DistanceError::Message(message))
+            return Err(DistanceError::Message(message));
         }
         efr.seq[i] = ea[*nuc as usize];
-        if (efr.seq[i] < 240) && (efr.seq[i] != other.seq[i]) { // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
+        if (efr.seq[i] < 240) && (efr.seq[i] != other.seq[i]) {
+            // any difference apart from N/-/? is relevant here, not just certain nucleotide differences, because of the triangularity of query vs consensus, target vs consensus, query vs target.
             efr.differences.push(i)
         }
     }
@@ -169,7 +171,6 @@ fn encode_get_differences(record: &Record, other: &EncodedFastaRecord) -> Result
 
 // Load the records in a list of fasta files into a vector of records in memory.
 fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
-    
     let mut width: usize = 0;
     let mut records: Vec<EncodedFastaRecord> = vec![];
     let mut first = true;
@@ -184,7 +185,7 @@ fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
             width = efr.seq.len();
             first = false;
         } else if efr.seq.len() != width {
-            return Err(DistanceError::Message(err_message_different_length_seqs()))
+            return Err(DistanceError::Message(err_message_different_length_seqs()));
         }
 
         records.push(efr);
@@ -197,21 +198,25 @@ pub fn load_fastas<T: io::Read>(inputs: Vec<T>) -> Result<Vec<Vec<EncodedFastaRe
     let mut loaded = vec![];
     let mut counter = 0;
     for file in inputs {
-        loaded.push(
-            load_fasta(file)?
-        );
+        loaded.push(load_fasta(file)?);
         if counter == 1 && loaded[0][0].seq.len() != loaded[1][0].seq.len() {
-            return Err(DistanceError::Message(err_message_different_length_seqs()))
+            return Err(DistanceError::Message(err_message_different_length_seqs()));
         }
         counter += 1;
-    };
+    }
 
     Ok(loaded)
 }
 
 // Stream the records in a fasta file by passing them down a channel. Avoids loading the whole file into memory.
-pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>>, measure: &str, consen: Option<EncodedFastaRecord>, batchsize: usize, channel: Sender<Records>) -> Result<()> {
-
+pub fn stream_fasta<T: io::Read>(
+    stream: T,
+    loaded: &Vec<Vec<EncodedFastaRecord>>,
+    measure: &str,
+    consen: Option<EncodedFastaRecord>,
+    batchsize: usize,
+    channel: Sender<Records>,
+) -> Result<()> {
     let w = loaded[0][0].seq.len();
 
     let reader = fasta::Reader::new(stream);
@@ -224,7 +229,10 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
     match measure {
         "n" => {
             match consen {
-                None => return Err(DistanceError::Message("Expected a consensus sequence to be generated with the distance measures is n".to_string())),
+                None => return Err(DistanceError::Message(
+                    "Expected a consensus sequence to be generated with the distance measures is n"
+                        .to_string(),
+                )),
                 Some(EFR) => consensus = EFR,
             }
         }
@@ -235,7 +243,7 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
         let record = r?;
 
         if record.seq().len() != w {
-            return Err(DistanceError::Message(err_message_different_length_seqs()))
+            return Err(DistanceError::Message(err_message_different_length_seqs()));
         }
 
         let mut efr = EncodedFastaRecord::new_known_width(w);
@@ -250,11 +258,10 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
         batch_counter += 1;
 
         if batch_counter == batchsize {
-            channel
-                .send(Records{
-                        records: record_vec.clone(), 
-                        idx: idx_counter,
-                    })?;
+            channel.send(Records {
+                records: record_vec.clone(),
+                idx: idx_counter,
+            })?;
 
             idx_counter += 1;
             batch_counter = 0;
@@ -264,11 +271,10 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
 
     // send the last batch
     if record_vec.len() > 0 {
-        channel
-            .send(Records{
-                records: record_vec.clone(), 
-                idx: idx_counter,
-            })?;
+        channel.send(Records {
+            records: record_vec.clone(),
+            idx: idx_counter,
+        })?;
     }
 
     drop(channel);
@@ -278,7 +284,6 @@ pub fn stream_fasta<T: io::Read>(stream: T, loaded: &Vec<Vec<EncodedFastaRecord>
 
 // Calculate the (ATGC) consensus sequence from all the input data held in memory
 pub fn consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaRecord {
-
     // Alignment width
     let w = efras[0][0].seq.len();
     // Counts of ATGC for each alignment column
@@ -324,14 +329,14 @@ pub fn consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaRecord {
 
     let mut efr = EncodedFastaRecord::new_known_width(w);
     efr.seq = consensus;
-    
+
     efr
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bio::io::fasta::{Reader};
+    use bio::io::fasta::Reader;
     use crossbeam_channel::bounded;
 
     const FASTA: &[u8] = b">target
@@ -366,7 +371,7 @@ ATTATTATGATGCCC
 
         record.get_differences(&other);
 
-        assert_eq!(record.differences, vec![2,5]);
+        assert_eq!(record.differences, vec![2, 5]);
     }
 
     #[test]
@@ -374,7 +379,9 @@ ATTATTATGATGCCC
         let temp = read(FASTA);
         let record = encode(&temp).unwrap();
 
-        let desired_result: Vec<u8> = vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40];
+        let desired_result: Vec<u8> = vec![
+            136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40,
+        ];
 
         assert_eq!(record.seq, desired_result);
     }
@@ -396,17 +403,20 @@ ATTATTATGATGCCC
         let other = encode(&temp1).unwrap();
 
         let temp2 = read(FASTA);
-        let record = encode_get_differences(&temp2, &other).unwrap();            
-        
-        assert_eq!(record.differences, vec![2,5]);
+        let record = encode_get_differences(&temp2, &other).unwrap();
+
+        assert_eq!(record.differences, vec![2, 5]);
     }
 
     #[test]
     fn test_load_alignment() {
         let record_vec = load_fasta(FASTA).unwrap();
-        
+
         assert_eq!(record_vec.len(), 1);
-        assert_eq!(record_vec[0].seq, vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40]);
+        assert_eq!(
+            record_vec[0].seq,
+            vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40]
+        );
     }
 
     #[test]
@@ -414,22 +424,31 @@ ATTATTATGATGCCC
         let temp1 = read(OTHER);
         let other = encode(&temp1).unwrap();
         let temp2 = read(FASTA);
-        let record = encode(&temp2).unwrap();  
+        let record = encode(&temp2).unwrap();
 
         let mut loaded = vec![vec![record.clone(), other.clone()]];
         let mut c = consensus(&loaded);
-        
-        assert_eq!(c.seq, vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40]);
+
+        assert_eq!(
+            c.seq,
+            vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40]
+        );
 
         loaded = vec![vec![record.clone(), record.clone()]];
         c = consensus(&loaded);
-        
-        assert_eq!(c.seq, vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40]);
+
+        assert_eq!(
+            c.seq,
+            vec![136, 24, 72, 136, 24, 72, 136, 24, 72, 136, 24, 72, 40, 40, 40]
+        );
 
         loaded = vec![vec![other.clone(), other.clone()]];
         c = consensus(&loaded);
-        
-        assert_eq!(c.seq, vec![136, 24, 24, 136, 24, 24, 136, 24, 72, 136, 24, 72, 40, 40, 40]);
+
+        assert_eq!(
+            c.seq,
+            vec![136, 24, 24, 136, 24, 24, 136, 24, 72, 136, 24, 72, 40, 40, 40]
+        );
     }
 
     #[test]
@@ -437,7 +456,7 @@ ATTATTATGATGCCC
         let temp1 = read(OTHER);
         let other = encode(&temp1).unwrap();
         let temp2 = read(FASTA);
-        let record = encode(&temp2).unwrap();  
+        let record = encode(&temp2).unwrap();
 
         let mut loaded = vec![vec![record, other]];
         let c = consensus(&loaded);
@@ -456,7 +475,6 @@ ATTATTATGATGCCC
         loaded[0][1].get_differences(&c);
         stream_fasta(OTHER, &loaded, "n", Some(c), 1, sx.clone());
         assert_eq!(rx.recv().unwrap().records[0], loaded[0][1]);
-        assert!(rx.is_empty());        
+        assert!(rx.is_empty());
     }
-
 }

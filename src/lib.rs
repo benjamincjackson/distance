@@ -1,10 +1,10 @@
-use clap::{Command, Arg, ArgMatches, crate_version};
+use clap::{crate_version, Arg, ArgMatches, Command};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use std::collections::HashMap;
-use std::io;
-use std::io::{BufWriter};
 use std::fs::File;
+use std::io;
+use std::io::BufWriter;
 use std::num::ParseIntError;
 use std::sync::Arc;
 use std::thread;
@@ -13,7 +13,6 @@ mod measures;
 use crate::measures::*;
 mod fastaio;
 use crate::fastaio::*;
-
 
 type Result<T> = std::result::Result<T, DistanceError>;
 
@@ -47,7 +46,6 @@ impl From<ParseIntError> for DistanceError {
     }
 }
 
-
 // A struct for passing the location of one pairwise comparison down a channel (between threads)
 #[derive(Clone, Debug, PartialEq)]
 struct Pair {
@@ -76,7 +74,6 @@ pub struct Distances {
 }
 
 pub fn get_cli_arguments() -> ArgMatches {
-    
     // Define the command-line interface
     let m = Command::new("distance")
         .version(crate_version!())
@@ -124,7 +121,7 @@ pub fn get_cli_arguments() -> ArgMatches {
             .help("Print licence information and exit"))
         .get_matches();
 
-        m
+    m
 }
 
 pub struct Setup {
@@ -141,7 +138,7 @@ pub struct Setup {
 }
 impl Setup {
     fn new() -> Setup {
-        Setup{
+        Setup {
             stream: None,
             measure: String::new(),
             threads: 1,
@@ -149,7 +146,7 @@ impl Setup {
             writer: BufWriter::new(Box::new(io::stdout())),
             distances_channel: bounded(100),
             wg_dist: WaitGroup::new(),
-            efras: vec![vec![EncodedFastaRecord::new();0];0],
+            efras: vec![vec![EncodedFastaRecord::new(); 0]; 0],
             ns: Vec::new(),
             consensus: None,
         }
@@ -157,7 +154,6 @@ impl Setup {
 }
 
 pub fn set_up(m: &ArgMatches) -> Result<Setup> {
-
     let mut setup = Setup::new();
 
     // One or two input fasta file names (or stdin)
@@ -165,13 +161,9 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     let raw_inputs: Vec<&str> = m.values_of("input").unwrap().into_iter().collect();
     for s in &raw_inputs {
         if s == &"stdin" {
-            inputs.push(Box::new(
-                io::stdin()
-            ))
+            inputs.push(Box::new(io::stdin()))
         } else {
-            inputs.push(Box::new(
-                File::open(s)?
-            ))
+            inputs.push(Box::new(File::open(s)?))
         }
     }
 
@@ -179,34 +171,22 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         if inputs.len() != 1 || (inputs.len() == 1 && raw_inputs[0] == "stdin") {
             return Err(DistanceError::Message("If you stream one file from disk, you must also provide exactly one other file to -i/--input".to_string()));
         }
-        let path = m
-            .value_of("stream")
-            .unwrap();
-        setup.stream = Some(
-            Box::new(
-                File::open(path)?
-            )
-        );
+        let path = m.value_of("stream").unwrap();
+        setup.stream = Some(Box::new(File::open(path)?));
     }
 
     // Which distance measure to use
-    setup.measure = m
-        .value_of("measure")
-        .unwrap()
-        .to_string();
+    setup.measure = m.value_of("measure").unwrap().to_string();
 
     // batch size - to tune the workload per message so that threads aren't fighting over pairs_receiver's lock as often
-    setup.batchsize = m
-        .value_of("batchsize")
-        .unwrap()
-        .parse::<usize>()?; 
+    setup.batchsize = m.value_of("batchsize").unwrap().parse::<usize>()?;
 
     // The aligned sequence data
     setup.efras = load_fastas(inputs)?;
 
     // Need to do some extra work depending on which distance measure is used.
     match setup.measure.as_str() {
-        // For the fast snp-distance, need to calculate the consensus then get the differences from 
+        // For the fast snp-distance, need to calculate the consensus then get the differences from
         // it for each record (in each file)
         "n" => {
             let consensus = consensus(&setup.efras);
@@ -234,20 +214,11 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     }
 
     if m.value_of("output").is_some() {
-        setup.writer = BufWriter::new(
-            Box::new(
-                File::create(
-                    m.value_of("output").unwrap()
-                )?
-            )
-        )
+        setup.writer = BufWriter::new(Box::new(File::create(m.value_of("output").unwrap())?))
     }
 
     // How many additional threads to use for calculating distances - need at least 1.
-    setup.threads = m
-        .value_of("threads")
-        .unwrap()
-        .parse::<usize>()?;
+    setup.threads = m.value_of("threads").unwrap().parse::<usize>()?;
 
     if setup.threads < 1 {
         setup.threads = 1;
@@ -257,9 +228,8 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 }
 
 pub fn stream(setup: Setup) -> Result<()> {
-
     let arc = Arc::new(setup.efras);
-    
+
     let (records_sender, records_receiver) = bounded(100);
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
@@ -272,17 +242,24 @@ pub fn stream(setup: Setup) -> Result<()> {
             let result = gather_write(setup.writer, distances_receiver);
             match result {
                 Err(e) => return Err(e),
-                Ok(_) => Ok(()), 
+                Ok(_) => Ok(()),
             }
         }
     });
-    
+
     let stream = thread::spawn({
         let measure = measure.clone();
         let arc = arc.clone();
         let s = setup.stream.expect("Stream not specified");
         move || {
-            let r = stream_fasta(s, &arc, &measure, setup.consensus, batchsize, records_sender);
+            let r = stream_fasta(
+                s,
+                &arc,
+                &measure,
+                setup.consensus,
+                batchsize,
+                records_sender,
+            );
             match r {
                 Err(e) => Err(e),
                 Ok(_) => Ok(()),
@@ -300,7 +277,7 @@ pub fn stream(setup: Setup) -> Result<()> {
     for worker in workers {
         let wg_dist = setup.wg_dist.clone();
         let measure = measure.clone();
-        let arc = arc.clone();       
+        let arc = arc.clone();
         thread::spawn(move || {
             let mut distances: Vec<Distance> = vec![];
             for message in worker.0.iter() {
@@ -317,19 +294,21 @@ pub fn stream(setup: Setup) -> Result<()> {
                             _ => panic!("Unknown distance measure"),
                         };
                         // add the ids and the distance to this batch's temporary vector
-                        distances.push(Distance{
+                        distances.push(Distance {
                             id1: target.id.clone(),
                             id2: query.id.clone(),
                             dist: d,
-                        });                        
+                        });
                     }
                 }
                 // send this batch of distances to the writer
-                worker.1
-                    .send(Distances{
+                worker
+                    .1
+                    .send(Distances {
                         distances: distances.clone(),
                         idx: message.idx,
-                        }).unwrap();
+                    })
+                    .unwrap();
                 // clear the vector ready for the next batch
                 distances.clear();
             }
@@ -351,7 +330,6 @@ pub fn stream(setup: Setup) -> Result<()> {
 }
 
 pub fn load(setup: Setup) -> Result<()> {
-
     let arc = Arc::new(setup.efras);
 
     let (pairs_sender, pairs_receiver) = bounded(100);
@@ -382,7 +360,7 @@ pub fn load(setup: Setup) -> Result<()> {
             }
         });
     } else {
-         thread::spawn({
+        thread::spawn({
             move || {
                 generate_pairs_rect(ns[0], ns[1], batchsize, pairs_sender);
             }
@@ -408,29 +386,31 @@ pub fn load(setup: Setup) -> Result<()> {
                 for pair in message.pairs {
                     // calculate the distance
                     let d = match measure.as_str() {
-                        "raw" => raw(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "n" => snp2(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "n_high" => snp(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "jc69" => jc69(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "k80" => k80(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
-                        "tn93" => tn93(&arc[0][pair.seq1_idx], &arc[arc.len()-1][pair.seq2_idx]),
+                        "raw" => raw(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
+                        "n" => snp2(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
+                        "n_high" => snp(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
+                        "jc69" => jc69(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
+                        "k80" => k80(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
+                        "tn93" => tn93(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
                         // should never get this far because the options are defined in the cli:
                         _ => panic!("Unknown distance measure"),
                     };
                     // add the ids and the distance to this batch's temporary vector
-                    distances.push(Distance{
+                    distances.push(Distance {
                         id1: arc[0][pair.seq1_idx].id.clone(),
-                        id2: arc[arc.len()-1][pair.seq2_idx].id.clone(),
+                        id2: arc[arc.len() - 1][pair.seq2_idx].id.clone(),
                         dist: d,
                     });
                 }
 
                 // send this batch of distances to the writer
-                worker.1
-                    .send(Distances{
+                worker
+                    .1
+                    .send(Distances {
                         distances: distances.clone(),
                         idx: message.idx,
-                    }).unwrap();
+                    })
+                    .unwrap();
 
                 // clear the vector ready for the next batch
                 distances.clear();
@@ -463,7 +443,6 @@ pub fn run(setup: Setup) -> Result<()> {
 // Given the sample size of a single alignment, generate all possible pairwise comparisons
 // within it, and pass them down a channel.
 fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) {
-    
     // this counter is used to send the correct-sized batch
     let mut size_counter: usize = 0;
 
@@ -474,23 +453,21 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) {
 
     for i in 0..n - 1 {
         for j in i + 1..n {
-
-            pair_vec
-                .push(Pair {
-                    seq1_idx: i,
-                    seq2_idx: j,
-                });
+            pair_vec.push(Pair {
+                seq1_idx: i,
+                seq2_idx: j,
+            });
 
             size_counter += 1;
 
             // when we reach the batch size, we send this batch of pairs
             if size_counter == size {
-
                 sender
-                    .send( Pairs {
+                    .send(Pairs {
                         pairs: pair_vec.clone(),
                         idx: idx_counter,
-                    }).unwrap();
+                    })
+                    .unwrap();
 
                 size_counter = 0;
                 idx_counter += 1;
@@ -502,19 +479,19 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) {
     // send the last batch
     if pair_vec.len() > 0 {
         sender
-            .send( Pairs {
+            .send(Pairs {
                 pairs: pair_vec.clone(),
                 idx: idx_counter,
-            }).unwrap();
+            })
+            .unwrap();
     }
-    
+
     drop(sender);
 }
 
 // Given the sample size of two alignments, generate all possible pairwise comparisons
 // between them, and pass them down a channel.
 fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>) {
-
     // this counter is used to send the correct-sized batch
     let mut size_counter: usize = 0;
 
@@ -522,25 +499,24 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
     let mut idx_counter: usize = 0;
 
     let mut pair_vec: Vec<Pair> = vec![];
-    
+
     for i in 0..n1 {
         for j in 0..n2 {
-            pair_vec
-                .push(Pair {
-                    seq1_idx: i,
-                    seq2_idx: j,
-                });
+            pair_vec.push(Pair {
+                seq1_idx: i,
+                seq2_idx: j,
+            });
 
             size_counter += 1;
 
             // when we reach the batch size, we send this batch of pairs
             if size_counter == size {
-
                 sender
-                    .send( Pairs {
+                    .send(Pairs {
                         pairs: pair_vec.clone(),
                         idx: idx_counter,
-                    }).unwrap();
+                    })
+                    .unwrap();
 
                 size_counter = 0;
                 idx_counter += 1;
@@ -552,10 +528,11 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
     // send the last batch
     if pair_vec.len() > 0 {
         sender
-            .send( Pairs {
+            .send(Pairs {
                 pairs: pair_vec.clone(),
                 idx: idx_counter,
-            }).unwrap();
+            })
+            .unwrap();
     }
 
     drop(sender);
@@ -564,7 +541,6 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
 // Write the distances as they arrive. Uses a hashmap whose keys are indices to write the results in the
 // order they are produced by generate_pairs_*()
 fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<()> {
-    
     writeln!(writer, "sequence1\tsequence2\tdistance")?;
 
     let mut m: HashMap<usize, Distances> = HashMap::new();
@@ -577,11 +553,15 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
             let rv = m.remove(&counter).unwrap();
             for result in rv.distances {
                 match result.dist {
-                    FloatInt::Int(d) => writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d)?,
-                    FloatInt::Float(d) => writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d)?,
+                    FloatInt::Int(d) => {
+                        writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d)?
+                    }
+                    FloatInt::Float(d) => {
+                        writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d)?
+                    }
                 }
             }
-            counter += 1;            
+            counter += 1;
         }
     }
 
@@ -589,7 +569,6 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -608,12 +587,66 @@ mod tests {
             }
         });
 
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 1}], idx: 0 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 2}], idx: 1 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 3}], idx: 2 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 2}], idx: 3 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 3}], idx: 4 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 2, seq2_idx: 3}], idx: 5 });
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 0,
+                    seq2_idx: 1
+                }],
+                idx: 0
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 0,
+                    seq2_idx: 2
+                }],
+                idx: 1
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 0,
+                    seq2_idx: 3
+                }],
+                idx: 2
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 1,
+                    seq2_idx: 2
+                }],
+                idx: 3
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 1,
+                    seq2_idx: 3
+                }],
+                idx: 4
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 2,
+                    seq2_idx: 3
+                }],
+                idx: 5
+            }
+        );
         assert!(rx.is_empty());
 
         let batch_size_2 = 4;
@@ -625,8 +658,46 @@ mod tests {
             }
         });
 
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 1}, Pair{seq1_idx: 0, seq2_idx: 2}, Pair{seq1_idx: 0, seq2_idx: 3}, Pair{seq1_idx: 1, seq2_idx: 2}], idx: 0 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 3}, Pair{seq1_idx: 2, seq2_idx: 3}], idx: 1 });
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![
+                    Pair {
+                        seq1_idx: 0,
+                        seq2_idx: 1
+                    },
+                    Pair {
+                        seq1_idx: 0,
+                        seq2_idx: 2
+                    },
+                    Pair {
+                        seq1_idx: 0,
+                        seq2_idx: 3
+                    },
+                    Pair {
+                        seq1_idx: 1,
+                        seq2_idx: 2
+                    }
+                ],
+                idx: 0
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![
+                    Pair {
+                        seq1_idx: 1,
+                        seq2_idx: 3
+                    },
+                    Pair {
+                        seq1_idx: 2,
+                        seq2_idx: 3
+                    }
+                ],
+                idx: 1
+            }
+        );
         assert!(rx.is_empty());
     }
 
@@ -644,10 +715,46 @@ mod tests {
             }
         });
 
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 0}], idx: 0 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 1}], idx: 1 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 0}], idx: 2 });
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 1, seq2_idx: 1}], idx: 3 });
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 0,
+                    seq2_idx: 0
+                }],
+                idx: 0
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 0,
+                    seq2_idx: 1
+                }],
+                idx: 1
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 1,
+                    seq2_idx: 0
+                }],
+                idx: 2
+            }
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![Pair {
+                    seq1_idx: 1,
+                    seq2_idx: 1
+                }],
+                idx: 3
+            }
+        );
         assert!(rx.is_empty());
 
         let batch_size_2 = 4;
@@ -659,15 +766,38 @@ mod tests {
             }
         });
 
-        assert_eq!(rx.recv().unwrap(), Pairs{pairs: vec![Pair{seq1_idx: 0, seq2_idx: 0}, Pair{seq1_idx: 0, seq2_idx: 1}, Pair{seq1_idx: 1, seq2_idx: 0}, Pair{seq1_idx: 1, seq2_idx: 1}], idx: 0 });
+        assert_eq!(
+            rx.recv().unwrap(),
+            Pairs {
+                pairs: vec![
+                    Pair {
+                        seq1_idx: 0,
+                        seq2_idx: 0
+                    },
+                    Pair {
+                        seq1_idx: 0,
+                        seq2_idx: 1
+                    },
+                    Pair {
+                        seq1_idx: 1,
+                        seq2_idx: 0
+                    },
+                    Pair {
+                        seq1_idx: 1,
+                        seq2_idx: 1
+                    }
+                ],
+                idx: 0
+            }
+        );
         assert!(rx.is_empty());
     }
 
-// const LOAD: &[u8] = b">seq1
-// ATGATG
-// >seq2
-// ATGATT
-// ";
+    // const LOAD: &[u8] = b">seq1
+    // ATGATG
+    // >seq2
+    // ATGATT
+    // ";
 
     // #[test]
     // fn test_load() {

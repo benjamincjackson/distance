@@ -1,4 +1,4 @@
-// An array whose indices are integer representations of characters and 
+// An array whose indices are integer representations of characters and
 // who contents are Emmanual Paradis' bitwise coding scheme. Used to encode
 // the sequences for fast comparisons
 pub fn encoding_array() -> [u8; 256] {

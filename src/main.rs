@@ -1,7 +1,6 @@
 use distance::*;
 
 fn main() -> Result<(), DistanceError> {
-
     let m = get_cli_arguments();
 
     if m.is_present("licenses") {
