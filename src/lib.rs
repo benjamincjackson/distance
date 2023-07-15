@@ -273,6 +273,8 @@ pub fn stream(setup: Setup) -> Result<()> {
         workers.push((records_receiver.clone(), distances_sender.clone()))
     }
 
+    let f = get_distance_function(measure.as_str());
+
     // Spin up the threads that do the distance-calculating
     for worker in workers {
         let wg_dist = setup.wg_dist.clone();
@@ -283,16 +285,7 @@ pub fn stream(setup: Setup) -> Result<()> {
             for message in worker.0.iter() {
                 for target in message.records {
                     for query in &arc[0] {
-                        let d = match measure.as_str() {
-                            "raw" => raw(query, &target),
-                            "n" => snp2(query, &target),
-                            "n_high" => snp(query, &target),
-                            "jc69" => jc69(query, &target),
-                            "k80" => k80(query, &target),
-                            "tn93" => tn93(query, &target),
-                            // should never get this far because the options are defined in the cli:
-                            _ => panic!("Unknown distance measure"),
-                        };
+                        let d = f(query, &target);
                         // add the ids and the distance to this batch's temporary vector
                         distances.push(Distance {
                             id1: target.id.clone(),
@@ -373,6 +366,9 @@ pub fn load(setup: Setup) -> Result<()> {
         workers.push((pairs_receiver.clone(), distances_sender.clone()))
     }
 
+    // Which distance function to use
+    let f = get_distance_function(measure.as_str());
+
     // Spin up the threads that do the distance-calculating
     for worker in workers {
         let wg_dist = setup.wg_dist.clone();
@@ -385,16 +381,7 @@ pub fn load(setup: Setup) -> Result<()> {
                 // for each pair in this batch
                 for pair in message.pairs {
                     // calculate the distance
-                    let d = match measure.as_str() {
-                        "raw" => raw(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
-                        "n" => snp2(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
-                        "n_high" => snp(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
-                        "jc69" => jc69(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
-                        "k80" => k80(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
-                        "tn93" => tn93(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]),
-                        // should never get this far because the options are defined in the cli:
-                        _ => panic!("Unknown distance measure"),
-                    };
+                    let d = f(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]);
                     // add the ids and the distance to this batch's temporary vector
                     distances.push(Distance {
                         id1: arc[0][pair.seq1_idx].id.clone(),
@@ -429,6 +416,21 @@ pub fn load(setup: Setup) -> Result<()> {
     write.join().unwrap()?;
 
     Ok(())
+}
+
+// Return the correct distance function given the CLI input
+fn get_distance_function(s: &str) -> fn(&EncodedFastaRecord, &EncodedFastaRecord) -> FloatInt {
+    let f = match s {
+        "raw" => raw,
+        "n" => snp2,
+        "n_high" => snp,
+        "jc69" => jc69,
+        "k80" => k80,
+        "tn93" => tn93,
+        // should never get this far because the options are defined in the cli:
+        _ => panic!("Unknown distance measure"),
+    };
+    f
 }
 
 pub fn run(setup: Setup) -> Result<()> {
