@@ -73,7 +73,7 @@ Use the `-t` option to use spin up multiple threads for pairwise comparisons (in
 distance -t 8 -m jc69 -i aligned.fasta -o jc69.tsv
 ```
 
-and the `-b` option to tune the workload per thread, which may result in an extra speedup:
+and the `-b` option to tune the workload per thread, which may result in extra efficiency:
 
 ```
 distance -t 8 -b 1000 -m jc69 -i aligned.fasta -o jc69.tsv
