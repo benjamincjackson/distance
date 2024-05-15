@@ -556,10 +556,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
     Ok(())
 }
 
-// Write the distances as they arrive. Uses a hashmap whose keys are indices to write the results in the
-// order they are produced by generate_pairs_*()
-fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<()> {
-    let r = writeln!(writer, "sequence1\tsequence2\tdistance");
+fn handle_broken_pipe(r: std::result::Result<(), io::Error>) -> Result<()> {
     match r {
         Ok(_) => (),
         Err(e) => {
@@ -570,6 +567,14 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
             }
         },
     }
+    Ok(())
+}
+
+// Write the distances as they arrive. Uses a hashmap whose keys are indices to write the results in the
+// order they are produced by generate_pairs_*()
+fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<()> {
+    let r = writeln!(writer, "sequence1\tsequence2\tdistance");
+    handle_broken_pipe(r)?;
 
     let mut m: HashMap<usize, Distances> = HashMap::new();
 
@@ -583,29 +588,11 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
                 match result.dist {
                     FloatInt::Int(d) => {
                         let r = writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d);
-                        match r {
-                            Ok(_) => (),
-                            Err(e) => {
-                                if e.kind() == io::ErrorKind::BrokenPipe {
-                                    std::process::exit(0);
-                                } else {
-                                    return Err(DistanceError::IOError(e))
-                                }
-                            },
-                        }
+                        handle_broken_pipe(r)?;
                     }
                     FloatInt::Float(d) => {
                         let r = writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d);
-                        match r {
-                            Ok(_) => (),
-                            Err(e) => {
-                                if e.kind() == io::ErrorKind::BrokenPipe {
-                                    std::process::exit(0);
-                                } else {
-                                    return Err(DistanceError::IOError(e))
-                                }
-                            },
-                        }
+                        handle_broken_pipe(r)?;
                     }
                 }
             }
@@ -614,16 +601,7 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
     }
 
     let r = writer.flush();
-    match r {
-        Ok(_) => (),
-        Err(e) => {
-            if e.kind() == io::ErrorKind::BrokenPipe {
-                std::process::exit(0);
-            } else {
-                return Err(DistanceError::IOError(e))
-            }
-        },
-    }
+    handle_broken_pipe(r)?;
     
     Ok(())
 }
