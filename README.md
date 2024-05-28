@@ -107,4 +107,4 @@ OPTIONS:
 
 ## Acknowledgements
 
-This program incorporates [rust-bio](https://rust-bio.github.io/). This program makes use of the [bitwise coding scheme for nucleotides](http://ape-package.ird.fr/misc/BitLevelCodingScheme.html) by Emmanuel Paradis, as used in ape ([Paradis, 2004](https://doi.org/10.1093/bioinformatics/btg412)). Equation (7) in Tamura and Nei ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) is also rearranged according to ape's source code.
+This program incorporates [rust-bio](https://rust-bio.github.io/). This program makes use of the [bitwise coding scheme for nucleotides](https://emmanuelparadis.github.io/misc/BitLevelCodingScheme.html) by Emmanuel Paradis, as used in ape ([Paradis, 2004](https://doi.org/10.1093/bioinformatics/btg412)). Equation (7) in Tamura and Nei ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) is also rearranged according to ape's source code.
