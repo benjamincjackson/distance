@@ -1,3 +1,4 @@
+use clap::value_parser;
 use clap::{crate_version, Arg, ArgMatches, Command};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
@@ -82,53 +83,66 @@ pub struct Distances {
 
 pub fn get_cli_arguments() -> ArgMatches {
     // Define the command-line interface
-    let m = Command::new("distance")
+    Command::new("distance")
         .version(crate_version!())
-        .arg(Arg::new("threads")
-            .short('t')
-            .long("threads")
-            .takes_value(true)
-            .default_value("1")
-            .help("How many threads to spin up for pairwise comparisons"))
+        .override_usage(
+            "\n       \
+             distance alignment.fasta\n       \
+             cat alignment.fasta | distance\n       \
+             distance alignment.fasta -o distances.tsv\n       \
+             distance -t 8 -m jc69 alignment.fasta -o jc69.tsv\n       \
+             distance alignment1.fasta alignment2.fasta > distances2.tsv\n       \
+             distance -i smallAlignment.fasta -s bigAlignment.fasta -o distances3.tsv\n       \
+             cat bigAlignment.fasta | distance smallAlignment.fasta -s - > distances3.tsv\n       \
+             "
+       )
         .arg(Arg::new("input")
             .short('i')
             .long("input")
-            .help("Input alignment file(s) in fasta format. Loaded into memory")
-            .takes_value(true)
-            .multiple_values(true)
-            .max_values(2)
-            .default_value("stdin"))
+            .help("One or two input alignment files in fasta format. Loaded into memory. This flag can be omitted and the files passed as positional arguments")
+            .num_args(0..=2)
+            .required(false))
+        .arg(Arg::new("input_pos_1")
+            .index(1)
+            .required(false)
+            .hide(true))
+        .arg(Arg::new("input_pos_2")
+            .index(2)
+            .required(false)
+            .hide(true))
         .arg(Arg::new("stream")
             .short('s')
             .long("stream")
-            .takes_value(true)
-            .multiple_values(false)
-            .help("Input alignment file in fasta format. Streamed from disk. Requires exactly one file also be specifed to -i"))
+            .required(false)
+            .help("One input alignment file in fasta format. Streamed from disk (or stdin using \"-s -\"). Requires exactly one file also be loaded"))
         .arg(Arg::new("measure")
             .short('m')
             .long("measure")
-            .takes_value(true)
             .default_value("raw")
-            .possible_values(["n", "n_high", "raw", "jc69", "k80", "tn93"])
+            .value_parser(["n", "n_high", "raw", "jc69", "k80", "tn93"])
             .help("Which distance measure to use"))
         .arg(Arg::new("output")
             .short('o')
             .long("output")
-            .takes_value(true)
             .help("Output file in tab-separated-value format. Omit this option to print to stdout"))
+        .arg(Arg::new("threads")
+            .short('t')
+            .long("threads")
+            .default_value("1")
+            .value_parser(value_parser!(usize))
+            .help("How many threads to spin up for pairwise comparisons"))
         .arg(Arg::new("batchsize")
             .long("batchsize")
             .short('b')
             .default_value("1")
+            .value_parser(value_parser!(usize))
             .help("Try setting this >(>) 1 if you are struggling to get a speedup when adding threads"))
         .arg(Arg::new("licenses")
             .long("licenses")
             .short('l')
-            .takes_value(false)
+            .num_args(0)
             .help("Print licence information and exit"))
-        .get_matches();
-
-    m
+        .get_matches()
 }
 
 pub struct Setup {
@@ -153,7 +167,7 @@ impl Setup {
             writer: BufWriter::new(Box::new(io::stdout())),
             distances_channel: bounded(100),
             wg_dist: WaitGroup::new(),
-            efras: vec![vec![EncodedFastaRecord::new(); 0]; 0],
+            efras: vec![vec![]],
             ns: Vec::new(),
             consensus: None,
         }
@@ -164,29 +178,67 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     let mut setup = Setup::new();
 
     // One or two input fasta file names (or stdin)
-    let mut inputs: Vec<Box<dyn std::io::Read>> = Vec::new();
-    let raw_inputs: Vec<&str> = m.values_of("input").unwrap().into_iter().collect();
-    for s in &raw_inputs {
-        if s == &"stdin" {
-            inputs.push(Box::new(io::stdin()))
-        } else {
-            inputs.push(Box::new(File::open(s)?))
+
+    // Inputs from positional arguments
+    let mut pos_inputs: Vec<String> = vec![];
+    let ip1 = m.try_get_one::<String>("input_pos_1").unwrap();
+    match ip1 {
+        None => {},
+        Some(s) => pos_inputs.push(s.to_string())
+    }
+    let ip2 = m.try_get_one::<String>("input_pos_2").unwrap();
+    match ip2 {
+        None => {},
+        Some(s) => pos_inputs.push(s.to_string())
+    }
+
+    // Inputs from -i/--input flag
+    let mut flag_inputs: Vec<String> = vec![];
+    let fi = m.get_many::<String>("input");
+    match fi {
+        None => {},
+        Some(v) => {
+            flag_inputs = v.map(|s| s.into()).collect()
         }
     }
 
-    if m.value_of("stream").is_some() {
-        if inputs.len() != 1 || (inputs.len() == 1 && raw_inputs[0] == "stdin") {
-            return Err(DistanceError::Message("If you stream one file from disk, you must also provide exactly one other file to -i/--input".to_string()));
-        }
-        let path = m.value_of("stream").unwrap();
-        setup.stream = Some(Box::new(File::open(path)?));
+    if !pos_inputs.is_empty() && !flag_inputs.is_empty() {
+        return Err(DistanceError::Message("For loading input files, don't use both positional arguments and the -i/--input flag".to_string()));
     }
+
+    let consolidated_inputs: Vec<String> = [flag_inputs, pos_inputs].concat();
+    let mut inputs: Vec<Box<dyn std::io::Read>> = Vec::new();
+
+    if consolidated_inputs.is_empty() {
+        inputs.push(Box::new(io::stdin()))
+    }
+    for s in &consolidated_inputs {
+        inputs.push(Box::new(File::open(s)?))
+    }
+
+    let stream = m.get_one::<String>("stream");
+    match stream {
+        None => {}
+        Some(s) => {
+            if consolidated_inputs.len() != 1 {
+                return Err(err_message_stream_input_count());
+            }
+            match s.as_str() {
+                "-" => {
+                    setup.stream = Some(Box::new(io::stdin()))
+                },
+                _ => {
+                    setup.stream = Some(Box::new(File::open(s)?))
+                }
+            }
+        }
+    }        
 
     // Which distance measure to use
-    setup.measure = m.value_of("measure").unwrap().to_string();
+    setup.measure = m.get_one::<String>("measure").unwrap().into();
 
     // batch size - to tune the workload per message so that threads aren't fighting over pairs_receiver's lock as often
-    setup.batchsize = m.value_of("batchsize").unwrap().parse::<usize>()?;
+    setup.batchsize = *m.get_one::<usize>("batchsize").unwrap();
 
     // The aligned sequence data
     setup.efras = load_fastas(inputs)?;
@@ -220,12 +272,16 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         setup.ns.push(efra.len());
     }
 
-    if m.value_of("output").is_some() {
-        setup.writer = BufWriter::new(Box::new(File::create(m.value_of("output").unwrap())?))
+    let output = m.get_one::<String>("output");
+    match output {
+        None => {},
+        Some (s) => {
+            setup.writer = BufWriter::new(Box::new(File::create(s)?))
+        }
     }
 
     // How many additional threads to use for calculating distances - need at least 1.
-    setup.threads = m.value_of("threads").unwrap().parse::<usize>()?;
+    setup.threads = *m.get_one::<usize>("threads").unwrap();
 
     if setup.threads < 1 {
         setup.threads = 1;
@@ -233,6 +289,11 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     Ok(setup)
 }
+
+fn err_message_stream_input_count() -> DistanceError {
+    DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string())
+}
+
 
 pub fn stream(setup: Setup) -> Result<()> {
     let arc = Arc::new(setup.efras);
@@ -248,7 +309,7 @@ pub fn stream(setup: Setup) -> Result<()> {
         move || {
             let result = gather_write(setup.writer, distances_receiver);
             match result {
-                Err(e) => return Err(e),
+                Err(e) => Err(e),
                 Ok(_) => Ok(()),
             }
         }
@@ -344,8 +405,8 @@ pub fn load(setup: Setup) -> Result<()> {
         move || {
             let r = gather_write(setup.writer, distances_receiver);
             match r {
-                Err(e) => return Err(e),
-                Ok(_) => return Ok(()),
+                Err(e) => Err(e),
+                Ok(_) => Ok(()),
             }
         }
     });
@@ -354,28 +415,27 @@ pub fn load(setup: Setup) -> Result<()> {
     // else there are two input files, so generate all pairwise comparisons between the alignments.
     // We spin up a thread do to this and move on to the next part of the program
 
-    let make_pairs: JoinHandle<std::prelude::v1::Result<(), DistanceError>>;
-    if ns.len() == 1 {
-        make_pairs = thread::spawn({
+    let make_pairs: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if ns.len() == 1 {
+        thread::spawn({
             move || {
                 let r = generate_pairs_square(ns[0], batchsize, pairs_sender);
                 match r {
-                    Err(e) => return Err(e),
-                    Ok(_) => return Ok(()),
+                    Err(e) => Err(e),
+                    Ok(_) => Ok(()),
                 }
             }
-        });
+        })
     } else {
-        make_pairs = thread::spawn({
+        thread::spawn({
             move || {
                 let r = generate_pairs_rect(ns[0], ns[1], batchsize, pairs_sender);
                 match r {
-                    Err(e) => return Err(e),
-                    Ok(_) => return Ok(()),
+                    Err(e) => Err(e),
+                    Ok(_) => Ok(()),
                 }
             }
-        });
-    }
+        })
+    };
 
     // A vector of receiver/sender tuples, cloned to share between each thread in threads.
     let mut workers = Vec::new();
@@ -423,21 +483,25 @@ pub fn load(setup: Setup) -> Result<()> {
         });
     }
 
-    make_pairs.join().unwrap()?;
+    make_pairs
+        .join()
+        .unwrap()?;
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
     setup.wg_dist.wait();
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write.join().unwrap()?;
+    write
+        .join()
+        .unwrap()?;
 
     Ok(())
 }
 
 // Return the correct distance function given the CLI input
 fn get_distance_function(s: &str) -> fn(&EncodedFastaRecord, &EncodedFastaRecord) -> FloatInt {
-    let f = match s {
+    match s {
         "raw" => raw,
         "n" => snp2,
         "n_high" => snp,
@@ -446,15 +510,14 @@ fn get_distance_function(s: &str) -> fn(&EncodedFastaRecord, &EncodedFastaRecord
         "tn93" => tn93,
         // should never get this far because the options are defined in the cli:
         _ => panic!("Unknown distance measure"),
-    };
-    f
+    }
 }
 
 pub fn run(setup: Setup) -> Result<()> {
     if setup.stream.is_some() {
-        let _ = stream(setup)?;
+        stream(setup)?;
     } else {
-        let _ = load(setup)?;
+        load(setup)?;
     }
     Ok(())
 }
@@ -495,7 +558,7 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
     }
 
     // send the last batch
-    if pair_vec.len() > 0 {
+    if !pair_vec.is_empty() {
         sender
             .send(Pairs {
                 pairs: pair_vec.clone(),
@@ -543,7 +606,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
     }
 
     // send the last batch
-    if pair_vec.len() > 0 {
+    if !pair_vec.is_empty() {
         sender
             .send(Pairs {
                 pairs: pair_vec.clone(),
@@ -558,7 +621,7 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
 
 fn handle_broken_pipe(r: std::result::Result<(), io::Error>) -> Result<()> {
     match r {
-        Ok(_) => (),
+        Ok(_) => {},
         Err(e) => {
             if e.kind() == io::ErrorKind::BrokenPipe {
                 std::process::exit(0);
@@ -591,7 +654,7 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
                         handle_broken_pipe(r)?;
                     }
                     FloatInt::Float(d) => {
-                        let r = writeln!(writer, "{}\t{}\t{}", &result.id1, &result.id2, d);
+                        let r = writeln!(writer, "{}\t{}\t{:.12}", &result.id1, &result.id2, d);
                         handle_broken_pipe(r)?;
                     }
                 }
@@ -611,15 +674,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_pairs_square() {
+    fn test_generate_pairs_square() -> Result<()> {
         let n: usize = 4;
         let batch_size = 1;
         let (sx, rx) = bounded(50);
 
-        thread::spawn({
+        let jh = thread::spawn({
             let sx = sx.clone();
             move || {
-                generate_pairs_square(n, batch_size, sx);
+                let r = generate_pairs_square(n, batch_size, sx);
+                match r {
+                    Err(e) => Err(e),
+                    Ok(_) => Ok(()),
+                }
             }
         });
 
@@ -685,12 +752,20 @@ mod tests {
         );
         assert!(rx.is_empty());
 
+        jh
+            .join()
+            .unwrap()?;
+
         let batch_size_2 = 4;
 
-        thread::spawn({
+        let jh = thread::spawn({
             let sx = sx.clone();
             move || {
-                generate_pairs_square(n, batch_size_2, sx);
+                let r = generate_pairs_square(n, batch_size_2, sx);
+                match r {
+                    Err(e) => Err(e),
+                    Ok(_) => Ok(()),
+                }
             }
         });
 
@@ -735,21 +810,35 @@ mod tests {
             }
         );
         assert!(rx.is_empty());
+
+    jh
+        .join()
+        .unwrap()?;
+
+    Ok(())
     }
 
     #[test]
-    fn test_generate_pairs_rect() {
+    fn test_generate_pairs_rect() -> Result<()> {
         let n1: usize = 2;
         let n2: usize = 2;
         let batch_size = 1;
         let (sx, rx) = bounded(50);
 
-        thread::spawn({
+        let jh = thread::spawn({
             let sx = sx.clone();
             move || {
-                generate_pairs_rect(n1, n2, batch_size, sx);
+                let r = generate_pairs_rect(n1, n2, batch_size, sx);
+                match r {
+                    Err(e) => Err(e),
+                    Ok(_) => Ok(()),
+                }
             }
         });
+
+        jh
+            .join()
+            .unwrap()?;
 
         assert_eq!(
             rx.recv().unwrap(),
@@ -795,10 +884,14 @@ mod tests {
 
         let batch_size_2 = 4;
 
-        thread::spawn({
+        let jh = thread::spawn({
             let sx = sx.clone();
             move || {
-                generate_pairs_rect(n1, n2, batch_size_2, sx);
+                let r = generate_pairs_rect(n1, n2, batch_size_2, sx);
+                match r {
+                    Err(e) => Err(e),
+                    Ok(_) => Ok(()),
+                }
             }
         });
 
@@ -827,6 +920,13 @@ mod tests {
             }
         );
         assert!(rx.is_empty());
+
+    
+    jh
+        .join()
+        .unwrap()?;
+
+    Ok(())
     }
 
     // const LOAD: &[u8] = b">seq1

@@ -74,6 +74,11 @@ impl EncodedFastaRecord {
         }
     }
 }
+impl Default for EncodedFastaRecord {
+    fn default() -> Self {
+        Self::new()
+        }
+    }
 
 #[derive(Clone)]
 pub struct Records {
@@ -96,9 +101,8 @@ pub fn encode(record: &Record) -> Result<EncodedFastaRecord> {
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
 
     efr.id = record.id().to_string();
-    match record.desc() {
-        Some(desc) => efr.description = desc.to_string(),
-        None => (),
+    if let Some(desc) = record.desc() {
+        efr.description = desc.to_string()
     }
 
     for (i, nuc) in record.seq().iter().enumerate() {
@@ -119,9 +123,8 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
     let mut counting = [0; 256];
 
     efr.id = record.id().to_string();
-    match record.desc() {
-        Some(desc) => efr.description = desc.to_string(),
-        None => (),
+    if let Some(desc) = record.desc() {
+        efr.description = desc.to_string()
     }
 
     for (i, nuc) in record.seq().iter().enumerate() {
@@ -149,9 +152,8 @@ fn encode_get_differences(
     let mut efr = EncodedFastaRecord::new_known_width(record.seq().len());
 
     efr.id = record.id().to_string();
-    match record.desc() {
-        Some(desc) => efr.description = desc.to_string(),
-        None => (),
+    if let Some(desc) = record.desc() {
+        efr.description = desc.to_string()
     }
 
     for (i, nuc) in record.seq().iter().enumerate() {
@@ -196,13 +198,11 @@ fn load_fasta<T: io::Read>(input: T) -> Result<Vec<EncodedFastaRecord>> {
 
 pub fn load_fastas<T: io::Read>(inputs: Vec<T>) -> Result<Vec<Vec<EncodedFastaRecord>>> {
     let mut loaded = vec![];
-    let mut counter = 0;
-    for file in inputs {
+    for (counter, file) in inputs.into_iter().enumerate() {
         loaded.push(load_fasta(file)?);
         if counter == 1 && loaded[0][0].seq.len() != loaded[1][0].seq.len() {
             return Err(DistanceError::Message(err_message_different_length_seqs()));
         }
-        counter += 1;
     }
 
     Ok(loaded)
@@ -226,17 +226,14 @@ pub fn stream_fasta<T: io::Read>(
     let mut record_vec: Vec<EncodedFastaRecord> = vec![];
 
     let mut consensus = EncodedFastaRecord::new_known_width(w);
-    match measure {
-        "n" => {
-            match consen {
-                None => return Err(DistanceError::Message(
-                    "Expected a consensus sequence to be generated with the distance measures is n"
-                        .to_string(),
-                )),
-                Some(EFR) => consensus = EFR,
-            }
+    if measure == "n" {
+        match consen {
+            None => return Err(DistanceError::Message(
+                "Expected a consensus sequence to be generated when the distance measure is n"
+                    .to_string(),
+            )),
+            Some(EFR) => consensus = EFR,
         }
-        _ => (),
     }
 
     for r in reader.records() {
@@ -246,13 +243,11 @@ pub fn stream_fasta<T: io::Read>(
             return Err(DistanceError::Message(err_message_different_length_seqs()));
         }
 
-        let mut efr = EncodedFastaRecord::new_known_width(w);
-
-        match measure {
-            "tn93" => efr = encode_count_bases(&record)?,
-            "n" => efr = encode_get_differences(&record, &consensus)?,
-            _ => efr = encode(&record)?,
-        }
+        let efr: EncodedFastaRecord = match measure {
+            "tn93" => encode_count_bases(&record)?,
+            "n" => encode_get_differences(&record, &consensus)?,
+            _ => encode(&record)?,
+        };
 
         record_vec.push(efr);
         batch_counter += 1;
@@ -270,7 +265,7 @@ pub fn stream_fasta<T: io::Read>(
     }
 
     // send the last batch
-    if record_vec.len() > 0 {
+    if !record_vec.is_empty() {
         channel.send(Records {
             records: record_vec.clone(),
             idx: idx_counter,
@@ -301,9 +296,8 @@ pub fn consensus(efras: &Vec<Vec<EncodedFastaRecord>>) -> EncodedFastaRecord {
     // For every record, at every alignment column, count which base occurs
     for efra in efras {
         for record in efra {
-            for i in 0..record.seq.len() {
-                let nuc = record.seq[i];
-                counts[i][lookup[nuc as usize]] += 1;
+            for (i, nuc) in record.seq.iter().enumerate() {
+                counts[i][lookup[*nuc as usize]] += 1;
             }
         }
     }
@@ -452,7 +446,7 @@ ATTATTATGATGCCC
     }
 
     #[test]
-    fn test_stream_alignment() {
+    fn test_stream_alignment() -> Result<()> {
         let temp1 = read(OTHER);
         let other = encode(&temp1).unwrap();
         let temp2 = read(FASTA);
@@ -463,18 +457,21 @@ ATTATTATGATGCCC
 
         let (sx, rx) = bounded(1);
 
-        stream_fasta(FASTA, &loaded, "raw", None, 1, sx.clone());
+        let _ = stream_fasta(FASTA, &loaded, "raw", None, 1, sx.clone())?;
+
         assert_eq!(rx.recv().unwrap().records[0], loaded[0][0]);
         assert!(rx.is_empty());
 
         loaded[0][0].count_bases();
-        stream_fasta(FASTA, &loaded, "tn93", None, 1, sx.clone());
+        let _ = stream_fasta(FASTA, &loaded, "tn93", None, 1, sx.clone())?;
         assert_eq!(rx.recv().unwrap().records[0], loaded[0][0]);
         assert!(rx.is_empty());
 
         loaded[0][1].get_differences(&c);
-        stream_fasta(OTHER, &loaded, "n", Some(c), 1, sx.clone());
+        let _ = stream_fasta(OTHER, &loaded, "n", Some(c), 1, sx.clone())?;
         assert_eq!(rx.recv().unwrap().records[0], loaded[0][1]);
         assert!(rx.is_empty());
+
+        Ok(())
     }
 }

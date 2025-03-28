@@ -3,15 +3,15 @@ use distance::*;
 fn main() -> Result<(), DistanceError> {
     let m = get_cli_arguments();
 
-    if m.is_present("licenses") {
+    let licenses = *m.get_one::<bool>("licenses").unwrap();
+    if licenses {
         println!("{}", licences());
         std::process::exit(0);
     }
 
     let setup = set_up(&m)?;
-
-    let _ = match run(setup) {
-        Ok(_) => (),
+    match run(setup) {
+        Ok(_) => {},
         Err(e) => return Err(e),
     };
 
@@ -19,7 +19,7 @@ fn main() -> Result<(), DistanceError> {
 }
 
 fn licences() -> String {
-    let licences = "
+    "
 Copyright 2022, Ben Jackson
 
 distance is licensed under the GNU LIBRARY GENERAL PUBLIC LICENSE, Version 2
@@ -45,7 +45,5 @@ THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMP
 NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
 NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES 
 OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.".to_string();
-
-    licences
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.".to_string()
 }

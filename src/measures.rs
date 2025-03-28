@@ -71,11 +71,7 @@ pub fn raw(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
 pub fn jc69(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let temp = raw(query, target);
     let mut p: f64 = 0.0;
-    match temp {
-        FloatInt::Float(f) => p = f,
-        _ => (),
-    }
-
+    if let FloatInt::Float(f) = temp { p = f }
     FloatInt::Float(-0.75 * (1.0 - (4.0 / 3.0) * p).ln())
 }
 
