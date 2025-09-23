@@ -54,6 +54,10 @@ impl From<ParseIntError> for DistanceError {
     }
 }
 
+fn err_message_stream_input_count() -> DistanceError {
+    DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string())
+}
+
 // A struct for passing the location of one pairwise comparison down a channel (between threads)
 #[derive(Clone, Debug, PartialEq)]
 struct Pair {
@@ -181,25 +185,17 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     // Inputs from positional arguments
     let mut pos_inputs: Vec<String> = vec![];
-    let ip1 = m.try_get_one::<String>("input_pos_1").unwrap();
-    match ip1 {
-        None => {},
-        Some(s) => pos_inputs.push(s.to_string())
+    if let Some(ip1) = m.get_one::<String>("input_pos_1") {
+        pos_inputs.push(ip1.to_string());
     }
-    let ip2 = m.try_get_one::<String>("input_pos_2").unwrap();
-    match ip2 {
-        None => {},
-        Some(s) => pos_inputs.push(s.to_string())
+    if let Some(ip2) = m.get_one::<String>("input_pos_2") {
+        pos_inputs.push(ip2.to_string());
     }
 
     // Inputs from -i/--input flag
     let mut flag_inputs: Vec<String> = vec![];
-    let fi = m.get_many::<String>("input");
-    match fi {
-        None => {},
-        Some(v) => {
-            flag_inputs = v.map(|s| s.into()).collect()
-        }
+    if let Some(fi) = m.get_many::<String>("input") {
+        flag_inputs = fi.map(|s| s.into()).collect();
     }
 
     if !pos_inputs.is_empty() && !flag_inputs.is_empty() {
@@ -216,23 +212,19 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         inputs.push(Box::new(File::open(s)?))
     }
 
-    let stream = m.get_one::<String>("stream");
-    match stream {
-        None => {}
-        Some(s) => {
-            if consolidated_inputs.len() != 1 {
-                return Err(err_message_stream_input_count());
-            }
-            match s.as_str() {
-                "-" => {
-                    setup.stream = Some(Box::new(io::stdin()))
-                },
-                _ => {
-                    setup.stream = Some(Box::new(File::open(s)?))
-                }
+    if let Some(s) = m.get_one::<String>("stream") {
+        if consolidated_inputs.len() != 1 {
+            return Err(err_message_stream_input_count());
+        }
+        match s.as_str() {
+            "-" => {
+                setup.stream = Some(Box::new(io::stdin()))
+            },
+            _ => {
+                setup.stream = Some(Box::new(File::open(s)?))
             }
         }
-    }        
+    }
 
     // Which distance measure to use
     setup.measure = m.get_one::<String>("measure").unwrap().into();
@@ -272,12 +264,8 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         setup.ns.push(efra.len());
     }
 
-    let output = m.get_one::<String>("output");
-    match output {
-        None => {},
-        Some (s) => {
-            setup.writer = BufWriter::new(Box::new(File::create(s)?))
-        }
+    if let Some(output) = m.get_one::<String>("output") {
+        setup.writer = BufWriter::new(Box::new(File::create(output)?))
     }
 
     // How many additional threads to use for calculating distances - need at least 1.
@@ -289,11 +277,6 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     Ok(setup)
 }
-
-fn err_message_stream_input_count() -> DistanceError {
-    DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string())
-}
-
 
 pub fn stream(setup: Setup) -> Result<()> {
     let arc = Arc::new(setup.efras);
@@ -378,14 +361,18 @@ pub fn stream(setup: Setup) -> Result<()> {
         });
     }
 
-    stream.join().unwrap()?;
+    stream
+        .join()
+        .unwrap()?;
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
     setup.wg_dist.wait();
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write.join().unwrap()?;
+    write
+        .join()
+        .unwrap()?;
 
     Ok(())
 }
@@ -416,15 +403,15 @@ pub fn load(setup: Setup) -> Result<()> {
     // We spin up a thread do to this and move on to the next part of the program
 
     let make_pairs: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if ns.len() == 1 {
-        thread::spawn({
-            move || {
-                let r = generate_pairs_square(ns[0], batchsize, pairs_sender);
-                match r {
-                    Err(e) => Err(e),
-                    Ok(_) => Ok(()),
-                }
+    thread::spawn({
+        move || {
+            let r = generate_pairs_square(ns[0], batchsize, pairs_sender);
+            match r {
+                Err(e) => Err(e),
+                Ok(_) => Ok(()),
             }
-        })
+        }
+    })
     } else {
         thread::spawn({
             move || {
@@ -519,6 +506,7 @@ pub fn run(setup: Setup) -> Result<()> {
     } else {
         load(setup)?;
     }
+
     Ok(())
 }
 
@@ -567,6 +555,7 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
     }
 
     drop(sender);
+
     Ok(())
 }
 
@@ -620,16 +609,14 @@ fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>)
 }
 
 fn handle_broken_pipe(r: std::result::Result<(), io::Error>) -> Result<()> {
-    match r {
-        Ok(_) => {},
-        Err(e) => {
-            if e.kind() == io::ErrorKind::BrokenPipe {
-                std::process::exit(0);
-            } else {
-                return Err(DistanceError::IOError(e))
-            }
-        },
+    if let Err(e) = r {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        } else {
+            return Err(DistanceError::IOError(e))
+        }
     }
+
     Ok(())
 }
 
