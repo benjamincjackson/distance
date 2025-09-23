@@ -1,19 +1,16 @@
+use clap::parser::ValueSource;
 use distance::*;
 
 fn main() -> Result<(), DistanceError> {
     let m = get_cli_arguments();
 
-    let licenses = *m.get_one::<bool>("licenses").unwrap();
-    if licenses {
+    if let Some(ValueSource::CommandLine) = m.value_source("licenses") {
         println!("{}", licences());
         std::process::exit(0);
     }
 
     let setup = set_up(&m)?;
-    match run(setup) {
-        Ok(_) => {},
-        Err(e) => return Err(e),
-    };
+    run(setup)?;
 
     Ok(())
 }

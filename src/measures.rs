@@ -18,6 +18,7 @@ pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
             d += 1;
         }
     }
+    
     FloatInt::Int(d)
 }
 

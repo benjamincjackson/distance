@@ -76,7 +76,7 @@ impl EncodedFastaRecord {
 }
 impl Default for EncodedFastaRecord {
     fn default() -> Self {
-        Self::new()
+            Self::new()
         }
     }
 
@@ -211,7 +211,7 @@ pub fn load_fastas<T: io::Read>(inputs: Vec<T>) -> Result<Vec<Vec<EncodedFastaRe
 // Stream the records in a fasta file by passing them down a channel. Avoids loading the whole file into memory.
 pub fn stream_fasta<T: io::Read>(
     stream: T,
-    loaded: &Vec<Vec<EncodedFastaRecord>>,
+    loaded: &[Vec<EncodedFastaRecord>],
     measure: &str,
     consen: Option<EncodedFastaRecord>,
     batchsize: usize,
