@@ -112,7 +112,8 @@ distance -t 8 -b 1000 -m jc69 -i alignment.fasta -o jc69.tsv
 
 ```
 > distance -h
-Usage:
+Usage: All sequences across all input files must be the same length.
+
        distance alignment.fasta
        cat alignment.fasta | distance
        distance alignment.fasta -o distances.tsv
