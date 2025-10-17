@@ -1,6 +1,6 @@
 [package]
 name = "distance"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,3 +13,4 @@ futures = "0.3"
 async-std = { version = "1.11.0", features = ["attributes"]}
 num-traits = "0.2.15"
 bio = "1.2.0"
+thiserror = "2.0.17"
