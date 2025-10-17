@@ -10,6 +10,7 @@ use std::num::ParseIntError;
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
+use thiserror::Error;
 
 mod measures;
 use crate::measures::*;
@@ -18,44 +19,22 @@ use crate::fastaio::*;
 
 type Result<T> = std::result::Result<T, DistanceError>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum DistanceError {
-    IOError(io::Error),
-    ParseIntError(ParseIntError),
-    ChanSendFastaErr(crossbeam_channel::SendError<fastaio::Records>),
-    ChanSendDistErr(crossbeam_channel::SendError<Distances>),
-    ChanSendPairErr(crossbeam_channel::SendError<Pairs>),
-    ChanRecvErr(crossbeam_channel::RecvError),
+    #[error(transparent)]
+    IOError(#[from] io::Error),
+    #[error(transparent)]
+    ParseIntError(#[from] ParseIntError),
+    #[error(transparent)]
+    ChanSendFastaErr(#[from] crossbeam_channel::SendError<fastaio::Records>),
+    #[error(transparent)]
+    ChanSendDistErr(#[from] crossbeam_channel::SendError<Distances>),
+    #[error(transparent)]
+    ChanSendPairErr(#[from] crossbeam_channel::SendError<Pairs>),
+    #[error(transparent)]
+    ChanRecvErr(#[from] crossbeam_channel::RecvError),
+    #[error("")]
     Message(String),
-}
-impl From<io::Error> for DistanceError {
-    fn from(err: io::Error) -> Self {
-        DistanceError::IOError(err)
-    }
-}
-impl From<crossbeam_channel::SendError<fastaio::Records>> for DistanceError {
-    fn from(err: crossbeam_channel::SendError<fastaio::Records>) -> Self {
-        DistanceError::ChanSendFastaErr(err)
-    }
-}
-impl From<crossbeam_channel::SendError<Distances>> for DistanceError {
-    fn from(err: crossbeam_channel::SendError<Distances>) -> Self {
-        DistanceError::ChanSendDistErr(err)
-    }
-}
-impl From<crossbeam_channel::SendError<Pairs>> for DistanceError {
-    fn from(err: crossbeam_channel::SendError<Pairs>) -> Self {
-        DistanceError::ChanSendPairErr(err)
-    }
-}
-impl From<ParseIntError> for DistanceError {
-    fn from(err: ParseIntError) -> Self {
-        DistanceError::ParseIntError(err)
-    }
-}
-
-fn err_message_stream_input_count() -> DistanceError {
-    DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string())
 }
 
 // A struct for passing the location of one pairwise comparison down a channel (between threads)
@@ -90,7 +69,8 @@ pub fn get_cli_arguments() -> ArgMatches {
     Command::new("distance")
         .version(crate_version!())
         .override_usage(
-            "\n       \
+            "All sequences across all input files must be the same length.\n       \
+             \n       \
              distance alignment.fasta\n       \
              cat alignment.fasta | distance\n       \
              distance alignment.fasta -o distances.tsv\n       \
@@ -150,29 +130,29 @@ pub fn get_cli_arguments() -> ArgMatches {
 }
 
 pub struct Setup {
-    stream: Option<Box<dyn io::Read + Send>>,
-    measure: String,
-    threads: usize,
-    batchsize: usize,
+    loaded_fastas: Vec<Vec<EncodedFastaRecord>>,
+    streamed_fasta: Option<Box<dyn io::Read + Send>>,
     writer: BufWriter<Box<dyn io::Write + Send>>,
+    measure: String,
+    n_threads: usize,
+    batchsize: usize,
     distances_channel: (Sender<Distances>, Receiver<Distances>),
-    wg_dist: WaitGroup,
-    efras: Vec<Vec<EncodedFastaRecord>>,
-    ns: Vec<usize>,
+    distances_waitgroup: WaitGroup,
+    sample_sizes: Vec<usize>,
     consensus: Option<EncodedFastaRecord>,
 }
 impl Setup {
     fn new() -> Setup {
         Setup {
-            stream: None,
-            measure: String::new(),
-            threads: 1,
-            batchsize: 1,
+            loaded_fastas: vec![vec![]],
+            streamed_fasta: None,
             writer: BufWriter::new(Box::new(io::stdout())),
+            measure: String::new(),
+            n_threads: 1,
+            batchsize: 1,
             distances_channel: bounded(100),
-            wg_dist: WaitGroup::new(),
-            efras: vec![vec![]],
-            ns: Vec::new(),
+            distances_waitgroup: WaitGroup::new(),
+            sample_sizes: Vec::new(),
             consensus: None,
         }
     }
@@ -184,7 +164,7 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     // One or two input fasta file names (or stdin)
 
     // Inputs from positional arguments
-    let mut pos_inputs: Vec<String> = vec![];
+    let mut pos_inputs: Vec<String> = Vec::new();
     if let Some(ip1) = m.get_one::<String>("input_pos_1") {
         pos_inputs.push(ip1.to_string());
     }
@@ -193,7 +173,7 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     }
 
     // Inputs from -i/--input flag
-    let mut flag_inputs: Vec<String> = vec![];
+    let mut flag_inputs: Vec<String> = Vec::new();
     if let Some(fi) = m.get_many::<String>("input") {
         flag_inputs = fi.map(|s| s.into()).collect();
     }
@@ -214,14 +194,14 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     if let Some(s) = m.get_one::<String>("stream") {
         if consolidated_inputs.len() != 1 {
-            return Err(err_message_stream_input_count());
+            return Err(DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string()));
         }
         match s.as_str() {
             "-" => {
-                setup.stream = Some(Box::new(io::stdin()))
+                setup.streamed_fasta = Some(Box::new(io::stdin()))
             },
             _ => {
-                setup.stream = Some(Box::new(File::open(s)?))
+                setup.streamed_fasta = Some(Box::new(File::open(s)?))
             }
         }
     }
@@ -233,26 +213,26 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     setup.batchsize = *m.get_one::<usize>("batchsize").unwrap();
 
     // The aligned sequence data
-    setup.efras = load_fastas(inputs)?;
+    setup.loaded_fastas = load_fastas(inputs)?;
 
     // Need to do some extra work depending on which distance measure is used.
     match setup.measure.as_str() {
         // For the fast snp-distance, need to calculate the consensus then get the differences from
         // it for each record (in each file)
         "n" => {
-            let consensus = consensus(&setup.efras);
-            for i in 0..setup.efras.len() {
-                for j in 0..setup.efras[i].len() {
-                    setup.efras[i][j].get_differences(&consensus);
+            let consensus = consensus(&setup.loaded_fastas);
+            for i in 0..setup.loaded_fastas.len() {
+                for j in 0..setup.loaded_fastas[i].len() {
+                    setup.loaded_fastas[i][j].get_differences(&consensus);
                 }
             }
             setup.consensus = Some(consensus);
         }
         // For Tamura and Nei (1993), need to calculate the base content of each record.
         "tn93" => {
-            for i in 0..setup.efras.len() {
-                for j in 0..setup.efras[i].len() {
-                    setup.efras[i][j].count_bases();
+            for i in 0..setup.loaded_fastas.len() {
+                for j in 0..setup.loaded_fastas[i].len() {
+                    setup.loaded_fastas[i][j].count_bases();
                 }
             }
         }
@@ -260,8 +240,8 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     }
 
     // The sample sizes (for generating the pairs)
-    for efra in &setup.efras {
-        setup.ns.push(efra.len());
+    for efra in &setup.loaded_fastas {
+        setup.sample_sizes.push(efra.len());
     }
 
     if let Some(output) = m.get_one::<String>("output") {
@@ -269,26 +249,26 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     }
 
     // How many additional threads to use for calculating distances - need at least 1.
-    setup.threads = *m.get_one::<usize>("threads").unwrap();
+    setup.n_threads = *m.get_one::<usize>("threads").unwrap();
 
-    if setup.threads < 1 {
-        setup.threads = 1;
+    if setup.n_threads < 1 {
+        setup.n_threads = 1;
     }
 
     Ok(setup)
 }
 
 pub fn stream(setup: Setup) -> Result<()> {
-    let arc = Arc::new(setup.efras);
+    let loaded_fastas_arc = Arc::new(setup.loaded_fastas);
 
     let (records_sender, records_receiver) = bounded(100);
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
-    let batchsize = setup.batchsize.to_owned();
-    let measure = setup.measure.to_owned();
+    let batchsize = setup.batchsize.clone();
+    let measure = setup.measure.clone();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
-    let write = thread::spawn({
+    let write_joinhandle = thread::spawn({
         move || {
             let result = gather_write(setup.writer, distances_receiver);
             match result {
@@ -300,12 +280,12 @@ pub fn stream(setup: Setup) -> Result<()> {
 
     let stream = thread::spawn({
         let measure = measure.clone();
-        let arc = arc.clone();
-        let s = setup.stream.expect("Stream not specified");
+        let loaded_fastas_arc = loaded_fastas_arc.clone();
+        let s = setup.streamed_fasta.expect("Stream not specified");
         move || {
             let r = stream_fasta(
                 s,
-                &arc,
+                &loaded_fastas_arc,
                 &measure,
                 setup.consensus,
                 batchsize,
@@ -320,26 +300,26 @@ pub fn stream(setup: Setup) -> Result<()> {
 
     // A vector of receiver/sender tuples, cloned to share between each thread in threads.
     let mut workers = Vec::new();
-    for _i in 0..setup.threads {
+    for _ in 0..setup.n_threads {
         workers.push((records_receiver.clone(), distances_sender.clone()))
     }
 
-    let f = get_distance_function(measure.as_str());
+    let f = get_distance_function(&measure);
 
     // Spin up the threads that do the distance-calculating
     for worker in workers {
-        let wg_dist = setup.wg_dist.clone();
-        let arc = arc.clone();
+        let wg_dist = setup.distances_waitgroup.clone();
+        let loaded_fastas_arc = loaded_fastas_arc.clone();
         thread::spawn(move || {
             let mut distances: Vec<Distance> = vec![];
             for message in worker.0.iter() {
-                for target in message.records {
-                    for query in &arc[0] {
-                        let d = f(query, &target);
+                for seq2 in message.records.iter() {
+                    for seq1 in &loaded_fastas_arc[0] {
+                        let d = f(seq1, seq2);
                         // add the ids and the distance to this batch's temporary vector
                         distances.push(Distance {
-                            id1: target.id.clone(),
-                            id2: query.id.clone(),
+                            id1: seq1.id.clone(),
+                            id2: seq2.id.clone(),
                             dist: d,
                         });
                     }
@@ -366,11 +346,11 @@ pub fn stream(setup: Setup) -> Result<()> {
         .unwrap()?;
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
-    setup.wg_dist.wait();
+    setup.distances_waitgroup.wait();
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write
+    write_joinhandle
         .join()
         .unwrap()?;
 
@@ -378,17 +358,17 @@ pub fn stream(setup: Setup) -> Result<()> {
 }
 
 pub fn load(setup: Setup) -> Result<()> {
-    let arc = Arc::new(setup.efras);
+    let loaded_fastas_arc = Arc::new(setup.loaded_fastas);
 
     let (pairs_sender, pairs_receiver) = bounded(100);
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
-    let ns = setup.ns.to_owned();
-    let batchsize = setup.batchsize.to_owned();
-    let measure = setup.measure.to_owned();
+    let sample_sizes = setup.sample_sizes.clone();
+    let batchsize = setup.batchsize.clone();
+    let measure = setup.measure.clone();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
-    let write = thread::spawn({
+    let write_joinhandle = thread::spawn({
         move || {
             let r = gather_write(setup.writer, distances_receiver);
             match r {
@@ -401,11 +381,10 @@ pub fn load(setup: Setup) -> Result<()> {
     // If there is one input file, generate all pairwise comparisons within the alignment,
     // else there are two input files, so generate all pairwise comparisons between the alignments.
     // We spin up a thread do to this and move on to the next part of the program
-
-    let make_pairs: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if ns.len() == 1 {
+    let make_pairs: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if sample_sizes.len() == 1 {
     thread::spawn({
         move || {
-            let r = generate_pairs_square(ns[0], batchsize, pairs_sender);
+            let r = generate_pairs_square(sample_sizes[0], batchsize, pairs_sender);
             match r {
                 Err(e) => Err(e),
                 Ok(_) => Ok(()),
@@ -415,7 +394,7 @@ pub fn load(setup: Setup) -> Result<()> {
     } else {
         thread::spawn({
             move || {
-                let r = generate_pairs_rect(ns[0], ns[1], batchsize, pairs_sender);
+                let r = generate_pairs_rectangle(sample_sizes[0], sample_sizes[1], batchsize, pairs_sender);
                 match r {
                     Err(e) => Err(e),
                     Ok(_) => Ok(()),
@@ -426,17 +405,17 @@ pub fn load(setup: Setup) -> Result<()> {
 
     // A vector of receiver/sender tuples, cloned to share between each thread in threads.
     let mut workers = Vec::new();
-    for _i in 0..setup.threads {
+    for _ in 0..setup.n_threads {
         workers.push((pairs_receiver.clone(), distances_sender.clone()))
     }
 
     // Which distance function to use
-    let f = get_distance_function(measure.as_str());
+    let f = get_distance_function(&measure);
 
     // Spin up the threads that do the distance-calculating
     for worker in workers {
-        let wg_dist = setup.wg_dist.clone();
-        let arc = arc.clone();
+        let wg_dist = setup.distances_waitgroup.clone();
+        let loaded_fastas_arc = loaded_fastas_arc.clone();
         thread::spawn(move || {
             let mut distances: Vec<Distance> = vec![];
             // for each batch
@@ -444,11 +423,13 @@ pub fn load(setup: Setup) -> Result<()> {
                 // for each pair in this batch
                 for pair in message.pairs {
                     // calculate the distance
-                    let d = f(&arc[0][pair.seq1_idx], &arc[arc.len() - 1][pair.seq2_idx]);
+                    let seq1 = &loaded_fastas_arc[0][pair.seq1_idx];
+                    let seq2 = &loaded_fastas_arc[loaded_fastas_arc.len() - 1][pair.seq2_idx];
+                    let d = f(seq1, seq2);
                     // add the ids and the distance to this batch's temporary vector
                     distances.push(Distance {
-                        id1: arc[0][pair.seq1_idx].id.clone(),
-                        id2: arc[arc.len() - 1][pair.seq2_idx].id.clone(),
+                        id1: seq1.id.clone(),
+                        id2: seq2.id.clone(),
                         dist: d,
                     });
                 }
@@ -475,11 +456,11 @@ pub fn load(setup: Setup) -> Result<()> {
         .unwrap()?;
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
-    setup.wg_dist.wait();
+    setup.distances_waitgroup.wait();
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write
+    write_joinhandle
         .join()
         .unwrap()?;
 
@@ -490,7 +471,7 @@ pub fn load(setup: Setup) -> Result<()> {
 fn get_distance_function(s: &str) -> fn(&EncodedFastaRecord, &EncodedFastaRecord) -> FloatInt {
     match s {
         "raw" => raw,
-        "n" => snp2,
+        "n" => snp_consensus,
         "n_high" => snp,
         "jc69" => jc69,
         "k80" => k80,
@@ -501,7 +482,7 @@ fn get_distance_function(s: &str) -> fn(&EncodedFastaRecord, &EncodedFastaRecord
 }
 
 pub fn run(setup: Setup) -> Result<()> {
-    if setup.stream.is_some() {
+    if setup.streamed_fasta.is_some() {
         stream(setup)?;
     } else {
         load(setup)?;
@@ -519,7 +500,7 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
     // this counter is sent down the channel in order to later retain input order in the output
     let mut idx_counter: usize = 0;
 
-    let mut pair_vec: Vec<Pair> = vec![];
+    let mut pair_vec: Vec<Pair> = Vec::new();
 
     for i in 0..n - 1 {
         for j in i + 1..n {
@@ -561,14 +542,14 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
 
 // Given the sample size of two alignments, generate all possible pairwise comparisons
 // between them, and pass them down a channel.
-fn generate_pairs_rect(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>) -> Result<()> {
+fn generate_pairs_rectangle(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>) -> Result<()> {
     // this counter is used to send the correct-sized batch
     let mut size_counter: usize = 0;
 
     // this counter is sent down the channel in order to later retain input order in the output
     let mut idx_counter: usize = 0;
 
-    let mut pair_vec: Vec<Pair> = vec![];
+    let mut pair_vec: Vec<Pair> = Vec::new();
 
     for i in 0..n1 {
         for j in 0..n2 {
@@ -806,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_pairs_rect() -> Result<()> {
+    fn test_generate_pairs_rectangle() -> Result<()> {
         let n1: usize = 2;
         let n2: usize = 2;
         let batch_size = 1;
@@ -815,7 +796,7 @@ mod tests {
         let jh = thread::spawn({
             let sx = sx.clone();
             move || {
-                let r = generate_pairs_rect(n1, n2, batch_size, sx);
+                let r = generate_pairs_rectangle(n1, n2, batch_size, sx);
                 match r {
                     Err(e) => Err(e),
                     Ok(_) => Ok(()),
@@ -874,7 +855,7 @@ mod tests {
         let jh = thread::spawn({
             let sx = sx.clone();
             move || {
-                let r = generate_pairs_rect(n1, n2, batch_size_2, sx);
+                let r = generate_pairs_rectangle(n1, n2, batch_size_2, sx);
                 match r {
                     Err(e) => Err(e),
                     Ok(_) => Ok(()),
@@ -916,42 +897,253 @@ mod tests {
     Ok(())
     }
 
-    // const LOAD: &[u8] = b">seq1
-    // ATGATG
-    // >seq2
-    // ATGATT
-    // ";
+    const FASTA_1: &[u8] = b">seq1
+ATGATG
+>seq2
+ATGATC
+";
 
-    // #[test]
-    // fn test_load() {
+    const FASTA_2: &[u8] = b">seqA
+ATGATG
+";
 
-    //     let mut buffer: Vec<u8> = Vec::new();
+    use std::io::{pipe, Read};
 
-    //     thread::scope(|s| {
-    //         let j = s.spawn(|| {
-    //             let reader = BufReader::new(io::stdin());
-    //             for b in reader.bytes() {
-    //                 let byte = b.unwrap();
-    //                 buffer.push(byte)
-    //             }
-    //         });
-    //     });
+    #[test]
+    fn test_integration_1() {
+        // Test with m = "n", batch size 1
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 1;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+        let c = consensus(&setup.loaded_fastas);
+        for i in 0..setup.loaded_fastas.len() {
+            for j in 0..setup.loaded_fastas[i].len() {
+                setup.loaded_fastas[i][j].get_differences(&c);
+            }
+        }
+        setup.consensus = Some(c);
 
-    //     let setup = Setup{
-    //         stream: None,
-    //         measure: "n_high".to_string(),
-    //         threads: 1,
-    //         batchsize: 1,
-    //         writer: BufWriter::new(Box::new(io::stdout())),
-    //         distances_channel: bounded(100),
-    //         wg_dist: WaitGroup::new(),
-    //         efras: vec![load_fasta(LOAD).unwrap()],
-    //         ns: vec![2],
-    //         consensus: None,
-    //     };
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseq2\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
 
-    //     load(setup);
+        // Test with batch size 2
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 2;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+        let c = consensus(&setup.loaded_fastas);
+        for i in 0..setup.loaded_fastas.len() {
+            for j in 0..setup.loaded_fastas[i].len() {
+                setup.loaded_fastas[i][j].get_differences(&c);
+            }
+        }
+        setup.consensus = Some(c);
 
-    //     // print!("{}", String::from_utf8_lossy(&b));
-    // }
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseq2\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+        // Test with m = "n", batch size 2, threads = 2
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n".to_string();
+        setup.n_threads = 2;
+        setup.batchsize = 2;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+        let c = consensus(&setup.loaded_fastas);
+        for i in 0..setup.loaded_fastas.len() {
+            for j in 0..setup.loaded_fastas[i].len() {
+                setup.loaded_fastas[i][j].get_differences(&c);
+            }
+        }
+        setup.consensus = Some(c);
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseq2\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+    }
+
+    #[test]
+    fn test_integration_2() {
+        // Test with m = "n_high", stream
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = Some(Box::new(FASTA_2));
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 1;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseqA\t0
+seq2\tseqA\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+        // Test with m = "n_high", stream, batch size 2
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = Some(Box::new(FASTA_2));
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 2;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseqA\t0
+seq2\tseqA\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+        // Test with m = "n_high", stream, batch size 2, threads = 2
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = Some(Box::new(FASTA_2));
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 2;
+        setup.batchsize = 2;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseqA\t0
+seq2\tseqA\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+    }
+
+    #[test]
+    fn test_integration_3() {
+        // Test with m = "n_high", two loaded inputs
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 1;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1, FASTA_2]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseqA\t0
+seq2\tseqA\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+        // Test with m = "n_high", two loaded inputs, batchsize 2
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 2;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1, FASTA_2]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseqA\t0
+seq2\tseqA\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+        // Test with m = "n_high", two loaded inputs, batchsize 2, threads 2
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 2;
+        setup.batchsize = 2;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_1, FASTA_2]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seq1\tseqA\t0
+seq2\tseqA\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+
+        // Test with m = "n_high", two loaded inputs, reverse order
+        let (mut reader, writer) = pipe().unwrap();
+        let mut setup = Setup::new();
+        setup.streamed_fasta = None;
+        setup.measure = "n_high".to_string();
+        setup.n_threads = 1;
+        setup.batchsize = 1;
+        setup.writer = BufWriter::new(Box::new(writer));
+        setup.loaded_fastas = load_fastas(vec![FASTA_2, FASTA_1]).unwrap();
+        setup.sample_sizes = setup.loaded_fastas.iter().map(|r| r.len()).collect();
+
+        let expected = "sequence1\tsequence2\tdistance
+seqA\tseq1\t0
+seqA\tseq2\t1
+".to_string();
+        let result = run(setup);
+        assert!(result.is_ok());
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output).unwrap();
+        assert_eq!(expected, output);
+    }
 }

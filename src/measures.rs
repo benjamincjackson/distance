@@ -25,7 +25,7 @@ pub fn snp(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
 // Reduced snp-distance. Only compares sites that differ from the alignment(s)'s consensus in
 // either record. Is fast in low-diversity datasets.
 // This is -m n in the CLI
-pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+pub fn snp_consensus(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
     let mut d: i64 = 0;
 
     for idx in query.differences.iter() {
@@ -38,8 +38,8 @@ pub fn snp2(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt
     for idx in target.differences.iter() {
         // if this site is different from the consensus in seq1 too, we've already tested it, so we must skip it here
         let result = query.differences[start..].binary_search(idx);
-        if result.is_ok() {
-            start = result.unwrap(); // we can incrementally search a smaller slice of query.distances in future iterations if we find a match.
+        if let Ok(pos) = result {
+            start = pos; // we can incrementally search a smaller slice of query.distances in future iterations if we find a match.
             continue;
         }
 
@@ -224,7 +224,7 @@ ATTATTATGATGCCC
     }
 
     #[test]
-    fn test_snp2() {
+    fn test_snp_consensus() {
         let (target, query) = setup();
 
         let mut v = vec![vec![target, query]];
@@ -233,7 +233,7 @@ ATTATTATGATGCCC
         v[0][0].get_differences(&c);
         v[0][1].get_differences(&c);
 
-        let result = snp2(&v[0][0], &v[0][1]);
+        let result = snp_consensus(&v[0][0], &v[0][1]);
         assert_eq!(result, FloatInt::Int(2));
     }
 
