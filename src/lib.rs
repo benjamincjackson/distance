@@ -1,5 +1,4 @@
-use clap::value_parser;
-use clap::{crate_version, Arg, ArgMatches, Command};
+use clap::{value_parser, crate_version, Arg, ArgMatches, Command};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use std::collections::HashMap;
@@ -25,6 +24,8 @@ pub enum DistanceError {
     IOError(#[from] io::Error),
     #[error(transparent)]
     ParseIntError(#[from] ParseIntError),
+    #[error(transparent)]
+    MatchesError(#[from] clap::parser::MatchesError),
     #[error(transparent)]
     ChanSendFastaErr(#[from] crossbeam_channel::SendError<fastaio::Records>),
     #[error(transparent)]
@@ -68,6 +69,7 @@ pub fn get_cli_arguments() -> ArgMatches {
     // Define the command-line interface
     Command::new("distance")
         .version(crate_version!())
+        .about("Calculate genetic distances within/between fasta-format alignments of DNA sequences")
         .override_usage(
             "All sequences across all input files must be the same length.\n       \
              \n       \
@@ -112,15 +114,14 @@ pub fn get_cli_arguments() -> ArgMatches {
         .arg(Arg::new("threads")
             .short('t')
             .long("threads")
-            .default_value("1")
             .value_parser(value_parser!(usize))
-            .help("How many threads to spin up for pairwise comparisons"))
+            .help("How many threads to spin up for pairwise comparisons. Omitting this option spins up the number of available CPUs"))
         .arg(Arg::new("batchsize")
             .long("batchsize")
             .short('b')
             .default_value("1")
             .value_parser(value_parser!(usize))
-            .help("Try setting this >(>) 1 if you are struggling to get a speedup when adding threads"))
+            .help("Try setting this >(>) 1 to tune the workload per thread"))
         .arg(Arg::new("licenses")
             .long("licenses")
             .short('l')
@@ -188,20 +189,20 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     if consolidated_inputs.is_empty() {
         inputs.push(Box::new(io::stdin()))
     }
-    for s in &consolidated_inputs {
-        inputs.push(Box::new(File::open(s)?))
+    for path in &consolidated_inputs {
+        inputs.push(Box::new(File::open(path)?))
     }
 
-    if let Some(s) = m.get_one::<String>("stream") {
+    if let Some(stream) = m.get_one::<String>("stream") {
         if consolidated_inputs.len() != 1 {
             return Err(DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string()));
         }
-        match s.as_str() {
+        match stream.as_str() {
             "-" => {
                 setup.streamed_fasta = Some(Box::new(io::stdin()))
             },
             _ => {
-                setup.streamed_fasta = Some(Box::new(File::open(s)?))
+                setup.streamed_fasta = Some(Box::new(File::open(stream)?))
             }
         }
     }
@@ -240,19 +241,26 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     }
 
     // The sample sizes (for generating the pairs)
-    for efra in &setup.loaded_fastas {
-        setup.sample_sizes.push(efra.len());
+    for records_vec in &setup.loaded_fastas {
+        setup.sample_sizes.push(records_vec.len());
     }
 
     if let Some(output) = m.get_one::<String>("output") {
         setup.writer = BufWriter::new(Box::new(File::create(output)?))
     }
 
-    // How many additional threads to use for calculating distances - need at least 1.
-    setup.n_threads = *m.get_one::<usize>("threads").unwrap();
-
-    if setup.n_threads < 1 {
-        setup.n_threads = 1;
+    let threads = m.get_one::<usize>("threads");
+    match threads {
+        Some(n) => {
+            if *n < 1 {
+                setup.n_threads = 1;
+            } else {
+                setup.n_threads = *n;
+            }
+        }
+        None => {
+            setup.n_threads = num_cpus::get();
+        }
     }
 
     Ok(setup)
@@ -264,7 +272,6 @@ pub fn stream(setup: Setup) -> Result<()> {
     let (records_sender, records_receiver) = bounded(100);
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
-    let batchsize = setup.batchsize.clone();
     let measure = setup.measure.clone();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
@@ -278,7 +285,7 @@ pub fn stream(setup: Setup) -> Result<()> {
         }
     });
 
-    let stream = thread::spawn({
+    let stream_joinhandle = thread::spawn({
         let measure = measure.clone();
         let loaded_fastas_arc = loaded_fastas_arc.clone();
         let s = setup.streamed_fasta.expect("Stream not specified");
@@ -288,7 +295,7 @@ pub fn stream(setup: Setup) -> Result<()> {
                 &loaded_fastas_arc,
                 &measure,
                 setup.consensus,
-                batchsize,
+                setup.batchsize,
                 records_sender,
             );
             match r {
@@ -313,13 +320,13 @@ pub fn stream(setup: Setup) -> Result<()> {
         thread::spawn(move || {
             let mut distances: Vec<Distance> = vec![];
             for message in worker.0.iter() {
-                for seq2 in message.records.iter() {
-                    for seq1 in &loaded_fastas_arc[0] {
-                        let d = f(seq1, seq2);
+                for record_2 in message.records.iter() {
+                    for record_1 in &loaded_fastas_arc[0] {
+                        let d = f(record_1, record_2);
                         // add the ids and the distance to this batch's temporary vector
                         distances.push(Distance {
-                            id1: seq1.id.clone(),
-                            id2: seq2.id.clone(),
+                            id1: record_1.id.clone(),
+                            id2: record_2.id.clone(),
                             dist: d,
                         });
                     }
@@ -341,7 +348,7 @@ pub fn stream(setup: Setup) -> Result<()> {
         });
     }
 
-    stream
+    stream_joinhandle
         .join()
         .unwrap()?;
 
@@ -364,7 +371,6 @@ pub fn load(setup: Setup) -> Result<()> {
     let (distances_sender, distances_receiver) = setup.distances_channel;
 
     let sample_sizes = setup.sample_sizes.clone();
-    let batchsize = setup.batchsize.clone();
     let measure = setup.measure.clone();
 
     // We spin up a thread to write the output as it arrives down the distance channel.
@@ -381,10 +387,10 @@ pub fn load(setup: Setup) -> Result<()> {
     // If there is one input file, generate all pairwise comparisons within the alignment,
     // else there are two input files, so generate all pairwise comparisons between the alignments.
     // We spin up a thread do to this and move on to the next part of the program
-    let make_pairs: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if sample_sizes.len() == 1 {
+    let make_pairs_joinhandle: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if sample_sizes.len() == 1 {
     thread::spawn({
         move || {
-            let r = generate_pairs_square(sample_sizes[0], batchsize, pairs_sender);
+            let r = generate_pairs_square(sample_sizes[0], setup.batchsize, pairs_sender);
             match r {
                 Err(e) => Err(e),
                 Ok(_) => Ok(()),
@@ -394,7 +400,7 @@ pub fn load(setup: Setup) -> Result<()> {
     } else {
         thread::spawn({
             move || {
-                let r = generate_pairs_rectangle(sample_sizes[0], sample_sizes[1], batchsize, pairs_sender);
+                let r = generate_pairs_rectangle(sample_sizes[0], sample_sizes[1], setup.batchsize, pairs_sender);
                 match r {
                     Err(e) => Err(e),
                     Ok(_) => Ok(()),
@@ -423,13 +429,13 @@ pub fn load(setup: Setup) -> Result<()> {
                 // for each pair in this batch
                 for pair in message.pairs {
                     // calculate the distance
-                    let seq1 = &loaded_fastas_arc[0][pair.seq1_idx];
-                    let seq2 = &loaded_fastas_arc[loaded_fastas_arc.len() - 1][pair.seq2_idx];
-                    let d = f(seq1, seq2);
+                    let record_1 = &loaded_fastas_arc[0][pair.seq1_idx];
+                    let record_2 = &loaded_fastas_arc[loaded_fastas_arc.len() - 1][pair.seq2_idx];
+                    let d = f(record_1, record_2);
                     // add the ids and the distance to this batch's temporary vector
                     distances.push(Distance {
-                        id1: seq1.id.clone(),
-                        id2: seq2.id.clone(),
+                        id1: record_1.id.clone(),
+                        id2: record_2.id.clone(),
                         dist: d,
                     });
                 }
@@ -451,7 +457,7 @@ pub fn load(setup: Setup) -> Result<()> {
         });
     }
 
-    make_pairs
+    make_pairs_joinhandle
         .join()
         .unwrap()?;
 
