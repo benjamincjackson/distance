@@ -96,13 +96,15 @@ seq1	seq10	0.001381740301
 
 Different distance measures are available. These are `n` - the total number of nucleotide differences, `n_high` - should give exactly the same answer as `n` but might be faster for very high diversity datasets (?), or if comparing a small number of sequences in `-i` with a large number of sequences in `-s`, `raw` - the number of nucleotide differences _per site_, `jc69` - Jukes and Cantor's ([1969](https://books.google.co.uk/books?id=FDHLBAAAQBAJ&lpg=PA21&ots=bmgnXDW6mB&dq=jukes%20cantor%201969&lr&pg=PA34#v=onepage&q=jukes%20cantor%201969&f=false)) evolutionary distance, `k80` - Kimura's ([1980](https://doi.org/10.1007/bf01731581)) evolutionary distance, and `tn93` - Tamura and Nei's ([1993](https://doi.org/10.1093/oxfordjournals.molbev.a040023)) evolutionary distance.
 
-Use the `-t` option to use spin up multiple threads for pairwise comparisons (in addition to a thread for i/o), e.g.:
+By default, `distance` will spin up as many threads for pairwise comparisons (in addition to a thread for i/o) as it detects there are logical CPUs available to it. 
+
+If you prefer, you can use the `-t` option to specify how many threads to spin up for pairwise comparisons , e.g.:
 
 ```
 distance -t 8 -m jc69 -i alignment.fasta -o jc69.tsv
 ```
 
-and the `-b` option to tune the workload per thread, which may result in extra efficiency:
+You can also use the `-b` option to tune the workload per thread, which may result in some extra efficiency:
 
 ```
 distance -t 8 -b 1000 -m jc69 -i alignment.fasta -o jc69.tsv
@@ -112,6 +114,8 @@ distance -t 8 -b 1000 -m jc69 -i alignment.fasta -o jc69.tsv
 
 ```
 > distance -h
+Calculate genetic distances within/between fasta-format alignments of DNA sequences
+
 Usage: All sequences across all input files must be the same length.
 
        distance alignment.fasta
@@ -127,8 +131,8 @@ Options:
   -s, --stream <stream>        One input alignment file in fasta format. Streamed from disk (or stdin using "-s -"). Requires exactly one file also be loaded
   -m, --measure <measure>      Which distance measure to use [default: raw] [possible values: n, n_high, raw, jc69, k80, tn93]
   -o, --output <output>        Output file in tab-separated-value format. Omit this option to print to stdout
-  -t, --threads <threads>      How many threads to spin up for pairwise comparisons [default: 1]
-  -b, --batchsize <batchsize>  Try setting this >(>) 1 if you are struggling to get a speedup when adding threads [default: 1]
+  -t, --threads <threads>      How many threads to spin up for pairwise comparisons. Omitting this option spins up the number of available CPUs
+  -b, --batchsize <batchsize>  Try setting this >(>) 1 to tune the workload per thread [default: 1]
   -l, --licenses               Print licence information and exit
   -h, --help                   Print help
   -V, --version                Print version
