@@ -1,6 +1,8 @@
 use clap::{value_parser, crate_version, Arg, ArgMatches, Command};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
@@ -223,18 +225,24 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
         "n" => {
             let consensus = consensus(&setup.loaded_fastas);
             for i in 0..setup.loaded_fastas.len() {
-                for j in 0..setup.loaded_fastas[i].len() {
-                    setup.loaded_fastas[i][j].get_differences(&consensus);
-                }
+                setup.loaded_fastas[i]
+                    .iter_mut()
+                    .par_bridge()
+                    .for_each(|record| {
+                        record.get_differences(&consensus)
+                    })
             }
             setup.consensus = Some(consensus);
         }
         // For Tamura and Nei (1993), need to calculate the base content of each record.
         "tn93" => {
             for i in 0..setup.loaded_fastas.len() {
-                for j in 0..setup.loaded_fastas[i].len() {
-                    setup.loaded_fastas[i][j].count_bases();
-                }
+                setup.loaded_fastas[i]
+                    .iter_mut()
+                    .par_bridge()
+                    .for_each(|record| {
+                        record.count_bases();
+                    })
             }
         }
         _ => (),

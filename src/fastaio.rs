@@ -9,16 +9,30 @@ use crate::{DistanceError, Result};
 mod encoding;
 use encoding::*;
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct BaseCounts {
+    pub A: usize,
+    pub T: usize,
+    pub G: usize,
+    pub C: usize,
+}
+
+impl BaseCounts {
+    fn new() -> BaseCounts {
+        BaseCounts { A: 0, T: 0, G: 0, C: 0 }
+    }
+    fn new_with_counts(count_A: usize, count_T: usize, count_G: usize, count_C: usize) -> BaseCounts {
+        BaseCounts { A: count_A, T: count_T, G: count_G, C: count_C }
+    }
+}
+
 // One encoded fasta record.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EncodedFastaRecord {
     pub id: String,
     pub description: String,
     pub seq: Vec<u8>,
-    pub count_A: usize, // the base contents are needed to calculate tn93 distance
-    pub count_T: usize,
-    pub count_G: usize,
-    pub count_C: usize,
+    pub base_counts: Option<BaseCounts>, // the base contents are needed to calculate tn93 distance
     pub differences: Vec<usize>, // differences from the consensus - makes for fast snp-distances for low-diversity datasets
     pub idx: usize,
 }
@@ -29,10 +43,7 @@ impl EncodedFastaRecord {
             id: String::new(),
             description: String::new(),
             seq: Vec::new(),
-            count_A: 0,
-            count_T: 0,
-            count_C: 0,
-            count_G: 0,
+            base_counts: None,
             differences: Vec::new(),
             idx: 0,
         }
@@ -42,27 +53,22 @@ impl EncodedFastaRecord {
             id: String::new(),
             description: String::new(),
             seq: vec![0; w],
-            count_A: 0,
-            count_T: 0,
-            count_C: 0,
-            count_G: 0,
+            base_counts: None,
             differences: Vec::new(),
             idx: 0,
         }
     }
     pub fn count_bases(&mut self) {
-        self.count_A = 0;
-        self.count_T = 0;
-        self.count_G = 0;
-        self.count_C = 0;
+        let mut base_counts = BaseCounts::new();
         let mut counting = [0; 256];
         for i in 0..self.seq.len() {
             counting[self.seq[i] as usize] += 1
         }
-        self.count_A = counting[136];
-        self.count_T = counting[24];
-        self.count_G = counting[72];
-        self.count_C = counting[40];
+        base_counts.A = counting[136];
+        base_counts.T = counting[24];
+        base_counts.G = counting[72];
+        base_counts.C = counting[40];
+        self.base_counts = Some(base_counts);
     }
     pub fn get_differences(&mut self, other: &EncodedFastaRecord) {
         self.differences.clear();
@@ -136,10 +142,11 @@ pub fn encode_count_bases(record: &Record) -> Result<EncodedFastaRecord> {
         counting[*nuc as usize] += 1;
     }
 
-    encoded_record.count_A = counting['A' as usize];
-    encoded_record.count_T = counting['T' as usize];
-    encoded_record.count_G = counting['G' as usize];
-    encoded_record.count_C = counting['C' as usize];
+    encoded_record.base_counts = Some(
+        BaseCounts::new_with_counts(
+        counting['A' as usize], counting['T' as usize], counting['G' as usize], counting['C' as usize]
+    )
+);
 
     Ok(encoded_record)
 }
@@ -360,10 +367,12 @@ ATTATTATGATGCCC
         let mut record = encode(&read(FASTA)).unwrap();
         record.count_bases();
 
-        assert_eq!(record.count_A, 4);
-        assert_eq!(record.count_T, 4);
-        assert_eq!(record.count_C, 3);
-        assert_eq!(record.count_G, 4);
+        let basecounts = record.base_counts.unwrap();
+
+        assert_eq!(basecounts.A, 4);
+        assert_eq!(basecounts.T, 4);
+        assert_eq!(basecounts.C, 3);
+        assert_eq!(basecounts.G, 4);
     }
 
     #[test]
@@ -393,10 +402,12 @@ ATTATTATGATGCCC
         let temp = read(FASTA);
         let record = encode_count_bases(&temp).unwrap();
 
-        assert_eq!(record.count_A, 4);
-        assert_eq!(record.count_T, 4);
-        assert_eq!(record.count_C, 3);
-        assert_eq!(record.count_G, 4);
+        let basecounts = record.base_counts.unwrap();
+
+        assert_eq!(basecounts.A, 4);
+        assert_eq!(basecounts.T, 4);
+        assert_eq!(basecounts.C, 3);
+        assert_eq!(basecounts.G, 4);
     }
 
     #[test]
