@@ -114,32 +114,36 @@ pub fn k80(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt 
 
 // Tamura and Nei's (1993) evolutionary distance
 pub fn tn93(query: &EncodedFastaRecord, target: &EncodedFastaRecord) -> FloatInt {
+
+    let query_base_counts = query.base_counts.clone().unwrap();
+    let target_base_counts = target.base_counts.clone().unwrap();
+
     // Total ATGC length of the two sequences
-    let L: usize = query.count_A
-        + query.count_T
-        + query.count_G
-        + query.count_C
-        + target.count_A
-        + target.count_T
-        + target.count_G
-        + target.count_C;
+    let L: usize = query_base_counts.A
+        + query_base_counts.T
+        + query_base_counts.G
+        + query_base_counts.C
+        + target_base_counts.A
+        + target_base_counts.T
+        + target_base_counts.G
+        + target_base_counts.C;
 
     // estimates of the equilibrium base contents from the pair's sequence data
-    let g_A: f64 = (target.count_A as f64 + query.count_A as f64) / L as f64;
-    let g_C: f64 = (target.count_C as f64 + query.count_C as f64) / L as f64;
-    let g_G: f64 = (target.count_G as f64 + query.count_G as f64) / L as f64;
-    let g_T: f64 = (target.count_T as f64 + query.count_T as f64) / L as f64;
+    let g_A: f64 = (target_base_counts.A as f64 + query_base_counts.A as f64) / L as f64;
+    let g_C: f64 = (target_base_counts.C as f64 + query_base_counts.C as f64) / L as f64;
+    let g_G: f64 = (target_base_counts.G as f64 + query_base_counts.G as f64) / L as f64;
+    let g_T: f64 = (target_base_counts.T as f64 + query_base_counts.T as f64) / L as f64;
 
-    let g_R: f64 = (target.count_A as f64
-        + query.count_A as f64
-        + target.count_G as f64
-        + query.count_G as f64)
+    let g_R: f64 = (target_base_counts.A as f64
+        + query_base_counts.A as f64
+        + target_base_counts.G as f64
+        + query_base_counts.G as f64)
         / L as f64;
 
-    let g_Y: f64 = (target.count_C as f64
-        + query.count_C as f64
-        + target.count_T as f64
-        + query.count_T as f64)
+    let g_Y: f64 = (target_base_counts.C as f64
+        + query_base_counts.C as f64
+        + target_base_counts.T as f64
+        + query_base_counts.T as f64)
         / L as f64;
 
     // tidies up the equations a bit, after ape
