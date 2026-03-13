@@ -36,6 +36,8 @@ pub enum DistanceError {
     ChanSendPairErr(#[from] crossbeam_channel::SendError<Pairs>),
     #[error(transparent)]
     ChanRecvErr(#[from] crossbeam_channel::RecvError),
+    #[error(transparent)]
+    ThreadPoolBuildErr(#[from] rayon::ThreadPoolBuildError),
     #[error("")]
     Message(String),
 }
@@ -164,6 +166,21 @@ impl Setup {
 pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     let mut setup = Setup::new();
 
+    let threads = m.get_one::<usize>("threads");
+    match threads {
+        Some(n) => {
+            if *n < 1 {
+                setup.n_threads = 1;
+            } else {
+                setup.n_threads = *n;
+            }
+        }
+        None => {
+            setup.n_threads = num_cpus::get();
+        }
+    }
+    rayon::ThreadPoolBuilder::new().num_threads(setup.n_threads).build_global()?;
+
     // One or two input fasta file names (or stdin)
 
     // Inputs from positional arguments
@@ -255,20 +272,6 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     if let Some(output) = m.get_one::<String>("output") {
         setup.writer = BufWriter::new(Box::new(File::create(output)?))
-    }
-
-    let threads = m.get_one::<usize>("threads");
-    match threads {
-        Some(n) => {
-            if *n < 1 {
-                setup.n_threads = 1;
-            } else {
-                setup.n_threads = *n;
-            }
-        }
-        None => {
-            setup.n_threads = num_cpus::get();
-        }
     }
 
     Ok(setup)
