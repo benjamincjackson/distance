@@ -1,7 +1,7 @@
-use clap::{value_parser, crate_version, Arg, ArgMatches, Command};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use clap::{Arg, ArgMatches, Command, crate_version, value_parser};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use crossbeam_utils::sync::WaitGroup;
-use rayon::iter::ParallelBridge;
+use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use std::fs::File;
@@ -36,6 +36,8 @@ pub enum DistanceError {
     ChanSendPairErr(#[from] crossbeam_channel::SendError<Pairs>),
     #[error(transparent)]
     ChanRecvErr(#[from] crossbeam_channel::RecvError),
+    #[error(transparent)]
+    ThreadPoolBuildErr(#[from] rayon::ThreadPoolBuildError),
     #[error("")]
     Message(String),
 }
@@ -164,6 +166,21 @@ impl Setup {
 pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     let mut setup = Setup::new();
 
+    let threads = m.get_one::<usize>("threads");
+    match threads {
+        Some(n) => {
+            if *n < 1 {
+                setup.n_threads = 1;
+            } else {
+                setup.n_threads = *n;
+            }
+        }
+        None => {
+            setup.n_threads = num_cpus::get();
+        }
+    }
+    rayon::ThreadPoolBuilder::new().num_threads(setup.n_threads).build_global()?;
+
     // One or two input fasta file names (or stdin)
 
     // Inputs from positional arguments
@@ -182,7 +199,10 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
     }
 
     if !pos_inputs.is_empty() && !flag_inputs.is_empty() {
-        return Err(DistanceError::Message("For loading input files, don't use both positional arguments and the -i/--input flag".to_string()));
+        return Err(DistanceError::Message(
+            "For loading input files, don't use both positional arguments and the -i/--input flag"
+                .to_string(),
+        ));
     }
 
     let consolidated_inputs: Vec<String> = [flag_inputs, pos_inputs].concat();
@@ -197,15 +217,14 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     if let Some(stream) = m.get_one::<String>("stream") {
         if consolidated_inputs.len() != 1 {
-            return Err(DistanceError::Message("If you stream one file, you must also provide exactly one other file to be loaded".to_string()));
+            return Err(DistanceError::Message(
+                "If you stream one file, you must also provide exactly one other file to be loaded"
+                    .to_string(),
+            ));
         }
         match stream.as_str() {
-            "-" => {
-                setup.streamed_fasta = Some(Box::new(io::stdin()))
-            },
-            _ => {
-                setup.streamed_fasta = Some(Box::new(File::open(stream)?))
-            }
+            "-" => setup.streamed_fasta = Some(Box::new(io::stdin())),
+            _ => setup.streamed_fasta = Some(Box::new(File::open(stream)?)),
         }
     }
 
@@ -226,23 +245,17 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
             let consensus = consensus(&setup.loaded_fastas);
             for i in 0..setup.loaded_fastas.len() {
                 setup.loaded_fastas[i]
-                    .iter_mut()
-                    .par_bridge()
-                    .for_each(|record| {
-                        record.get_differences(&consensus)
-                    })
+                    .par_iter_mut()
+                    .for_each(|record| record.get_differences(&consensus))
             }
             setup.consensus = Some(consensus);
         }
         // For Tamura and Nei (1993), need to calculate the base content of each record.
         "tn93" => {
             for i in 0..setup.loaded_fastas.len() {
-                setup.loaded_fastas[i]
-                    .iter_mut()
-                    .par_bridge()
-                    .for_each(|record| {
-                        record.count_bases();
-                    })
+                setup.loaded_fastas[i].par_iter_mut().for_each(|record| {
+                    record.count_bases();
+                })
             }
         }
         _ => (),
@@ -255,20 +268,6 @@ pub fn set_up(m: &ArgMatches) -> Result<Setup> {
 
     if let Some(output) = m.get_one::<String>("output") {
         setup.writer = BufWriter::new(Box::new(File::create(output)?))
-    }
-
-    let threads = m.get_one::<usize>("threads");
-    match threads {
-        Some(n) => {
-            if *n < 1 {
-                setup.n_threads = 1;
-            } else {
-                setup.n_threads = *n;
-            }
-        }
-        None => {
-            setup.n_threads = num_cpus::get();
-        }
     }
 
     Ok(setup)
@@ -356,18 +355,14 @@ pub fn stream(setup: Setup) -> Result<()> {
         });
     }
 
-    stream_joinhandle
-        .join()
-        .unwrap()?;
+    stream_joinhandle.join().unwrap()?;
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
     setup.distances_waitgroup.wait();
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write_joinhandle
-        .join()
-        .unwrap()?;
+    write_joinhandle.join().unwrap()?;
 
     Ok(())
 }
@@ -395,27 +390,33 @@ pub fn load(setup: Setup) -> Result<()> {
     // If there is one input file, generate all pairwise comparisons within the alignment,
     // else there are two input files, so generate all pairwise comparisons between the alignments.
     // We spin up a thread do to this and move on to the next part of the program
-    let make_pairs_joinhandle: JoinHandle<std::prelude::v1::Result<(), DistanceError>> = if sample_sizes.len() == 1 {
-    thread::spawn({
-        move || {
-            let r = generate_pairs_square(sample_sizes[0], setup.batchsize, pairs_sender);
-            match r {
-                Err(e) => Err(e),
-                Ok(_) => Ok(()),
-            }
-        }
-    })
-    } else {
-        thread::spawn({
-            move || {
-                let r = generate_pairs_rectangle(sample_sizes[0], sample_sizes[1], setup.batchsize, pairs_sender);
-                match r {
-                    Err(e) => Err(e),
-                    Ok(_) => Ok(()),
+    let make_pairs_joinhandle: JoinHandle<std::prelude::v1::Result<(), DistanceError>> =
+        if sample_sizes.len() == 1 {
+            thread::spawn({
+                move || {
+                    let r = generate_pairs_square(sample_sizes[0], setup.batchsize, pairs_sender);
+                    match r {
+                        Err(e) => Err(e),
+                        Ok(_) => Ok(()),
+                    }
                 }
-            }
-        })
-    };
+            })
+        } else {
+            thread::spawn({
+                move || {
+                    let r = generate_pairs_rectangle(
+                        sample_sizes[0],
+                        sample_sizes[1],
+                        setup.batchsize,
+                        pairs_sender,
+                    );
+                    match r {
+                        Err(e) => Err(e),
+                        Ok(_) => Ok(()),
+                    }
+                }
+            })
+        };
 
     // A vector of receiver/sender tuples, cloned to share between each thread in threads.
     let mut workers = Vec::new();
@@ -454,7 +455,8 @@ pub fn load(setup: Setup) -> Result<()> {
                     .send(Distances {
                         distances: distances.clone(),
                         idx: message.idx,
-                    }).unwrap();
+                    })
+                    .unwrap();
 
                 // clear the vector ready for the next batch
                 distances.clear();
@@ -465,18 +467,14 @@ pub fn load(setup: Setup) -> Result<()> {
         });
     }
 
-    make_pairs_joinhandle
-        .join()
-        .unwrap()?;
+    make_pairs_joinhandle.join().unwrap()?;
 
     // When all the distances have been calculated, we can drop the sending end of the distance channel
     setup.distances_waitgroup.wait();
     drop(distances_sender);
 
     // Joins when all the pairwise comparisons have been written, and then we're done.
-    write_joinhandle
-        .join()
-        .unwrap()?;
+    write_joinhandle.join().unwrap()?;
 
     Ok(())
 }
@@ -527,11 +525,10 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
 
             // when we reach the batch size, we send this batch of pairs
             if size_counter == size {
-                sender
-                    .send(Pairs {
-                        pairs: pair_vec.clone(),
-                        idx: idx_counter,
-                    })?;
+                sender.send(Pairs {
+                    pairs: pair_vec.clone(),
+                    idx: idx_counter,
+                })?;
 
                 size_counter = 0;
                 idx_counter += 1;
@@ -542,11 +539,10 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
 
     // send the last batch
     if !pair_vec.is_empty() {
-        sender
-            .send(Pairs {
-                pairs: pair_vec.clone(),
-                idx: idx_counter,
-            })?;
+        sender.send(Pairs {
+            pairs: pair_vec.clone(),
+            idx: idx_counter,
+        })?;
     }
 
     drop(sender);
@@ -556,7 +552,12 @@ fn generate_pairs_square(n: usize, size: usize, sender: Sender<Pairs>) -> Result
 
 // Given the sample size of two alignments, generate all possible pairwise comparisons
 // between them, and pass them down a channel.
-fn generate_pairs_rectangle(n1: usize, n2: usize, size: usize, sender: Sender<Pairs>) -> Result<()> {
+fn generate_pairs_rectangle(
+    n1: usize,
+    n2: usize,
+    size: usize,
+    sender: Sender<Pairs>,
+) -> Result<()> {
     // this counter is used to send the correct-sized batch
     let mut size_counter: usize = 0;
 
@@ -576,11 +577,10 @@ fn generate_pairs_rectangle(n1: usize, n2: usize, size: usize, sender: Sender<Pa
 
             // when we reach the batch size, we send this batch of pairs
             if size_counter == size {
-                sender
-                    .send(Pairs {
-                        pairs: pair_vec.clone(),
-                        idx: idx_counter,
-                    })?;
+                sender.send(Pairs {
+                    pairs: pair_vec.clone(),
+                    idx: idx_counter,
+                })?;
 
                 size_counter = 0;
                 idx_counter += 1;
@@ -591,11 +591,10 @@ fn generate_pairs_rectangle(n1: usize, n2: usize, size: usize, sender: Sender<Pa
 
     // send the last batch
     if !pair_vec.is_empty() {
-        sender
-            .send(Pairs {
-                pairs: pair_vec.clone(),
-                idx: idx_counter,
-            })?;
+        sender.send(Pairs {
+            pairs: pair_vec.clone(),
+            idx: idx_counter,
+        })?;
     }
 
     drop(sender);
@@ -608,7 +607,7 @@ fn handle_broken_pipe(r: std::result::Result<(), io::Error>) -> Result<()> {
         if e.kind() == io::ErrorKind::BrokenPipe {
             std::process::exit(0);
         } else {
-            return Err(DistanceError::IOError(e))
+            return Err(DistanceError::IOError(e));
         }
     }
 
@@ -647,7 +646,7 @@ fn gather_write<T: io::Write>(mut writer: T, rx: Receiver<Distances>) -> Result<
 
     let r = writer.flush();
     handle_broken_pipe(r)?;
-    
+
     Ok(())
 }
 
@@ -734,9 +733,7 @@ mod tests {
         );
         assert!(rx.is_empty());
 
-        jh
-            .join()
-            .unwrap()?;
+        jh.join().unwrap()?;
 
         let batch_size_2 = 4;
 
@@ -793,11 +790,9 @@ mod tests {
         );
         assert!(rx.is_empty());
 
-    jh
-        .join()
-        .unwrap()?;
+        jh.join().unwrap()?;
 
-    Ok(())
+        Ok(())
     }
 
     #[test]
@@ -818,9 +813,7 @@ mod tests {
             }
         });
 
-        jh
-            .join()
-            .unwrap()?;
+        jh.join().unwrap()?;
 
         assert_eq!(
             rx.recv().unwrap(),
@@ -903,12 +896,9 @@ mod tests {
         );
         assert!(rx.is_empty());
 
-    
-    jh
-        .join()
-        .unwrap()?;
+        jh.join().unwrap()?;
 
-    Ok(())
+        Ok(())
     }
 
     const FASTA_1: &[u8] = b">seq1
@@ -921,7 +911,7 @@ ATGATC
 ATGATG
 ";
 
-    use std::io::{pipe, Read};
+    use std::io::{Read, pipe};
 
     #[test]
     fn test_integration_1() {
@@ -945,7 +935,8 @@ ATGATG
 
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseq2\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -972,7 +963,8 @@ seq1\tseq2\t1
 
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseq2\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -999,13 +991,13 @@ seq1\tseq2\t1
 
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseq2\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
         let _ = reader.read_to_string(&mut output).unwrap();
         assert_eq!(expected, output);
-
     }
 
     #[test]
@@ -1024,7 +1016,8 @@ seq1\tseq2\t1
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseqA\t0
 seq2\tseqA\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -1045,7 +1038,8 @@ seq2\tseqA\t1
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseqA\t0
 seq2\tseqA\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -1066,7 +1060,8 @@ seq2\tseqA\t1
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseqA\t0
 seq2\tseqA\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -1090,7 +1085,8 @@ seq2\tseqA\t1
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseqA\t0
 seq2\tseqA\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -1111,7 +1107,8 @@ seq2\tseqA\t1
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseqA\t0
 seq2\tseqA\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -1132,7 +1129,8 @@ seq2\tseqA\t1
         let expected = "sequence1\tsequence2\tdistance
 seq1\tseqA\t0
 seq2\tseqA\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
@@ -1153,7 +1151,8 @@ seq2\tseqA\t1
         let expected = "sequence1\tsequence2\tdistance
 seqA\tseq1\t0
 seqA\tseq2\t1
-".to_string();
+"
+        .to_string();
         let result = run(setup);
         assert!(result.is_ok());
         let mut output = String::new();
